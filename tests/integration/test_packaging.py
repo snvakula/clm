@@ -15,13 +15,17 @@ TARBALL_SHA256 = "22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682
 
 def test_scripts_and_timer_parameters():
     scripts = ROOT / "scripts"
-    assert {path.name for path in scripts.iterdir()} == set(INSTALLERS.values())
+    assert {path.name for path in scripts.iterdir()} == {
+        *INSTALLERS.values(),
+        "install-client-bash.sh",
+    }
     for path in scripts.glob("*.sh"):
         subprocess.run(["bash", "-n", str(path)], check=True)
     units = ROOT / "packaging/systemd"
     schedules = {
         "clm-renew": ("02:00:00", "30min", "clm cert renew --all"),
         "clm-client-update": ("04:00:00", "3h", "clm-client update"),
+        "clm-client-bash-update": ("04:00:00", "3h", "clm-client-bash update"),
     }
     for name, (hour, delay, entrypoint) in schedules.items():
         timer = (units / f"{name}.timer").read_text()

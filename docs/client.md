@@ -18,7 +18,7 @@ server: https://clm.example.com
 token: 'replace-with-your-client-token'
 ```
 
-When upgrading a registered client, transfer the server URL and token from the old `/opt/clm-client/config/credentials` into `client.yaml`. The same applies to a rotated token.
+After rotating a client's token, update `client.yaml` with the replacement. For other Linux distributions, see the [Bash client guide](client-bash.md).
 
 ```sh
 sudo /opt/clm-client/bin/clm-client update

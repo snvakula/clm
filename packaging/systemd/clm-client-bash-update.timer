@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for CLM Bash client certificate updates
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+RandomizedDelaySec=3h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
