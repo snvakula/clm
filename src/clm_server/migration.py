@@ -6,8 +6,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from clm_common.certificate import json_bytes
-from clm_common.filesystem import read_regular, sync_directory, write_atomic
+from .certificate import json_bytes
+from .filesystem import read_regular, sync_directory, write_atomic
 
 DIRECTORIES = ("config", "certificates", "work")
 

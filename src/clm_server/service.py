@@ -12,11 +12,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from clm_common.certificate import KEYS, MAX_FILE, checksums, json_bytes, read_material, validate
-from clm_common.config import load_config
-from clm_common.filesystem import read_regular, sync_directory, write_atomic
-from clm_common.identity import storage_id
-from clm_common.locking import exclusive_lock, publication_lock
+from .certificate import KEYS, MAX_FILE, checksums, json_bytes, read_material, validate
+from .config import load_config
+from .filesystem import read_regular, sync_directory, write_atomic
+from .identity import storage_id
+from .locking import exclusive_lock, publication_lock
+from .logging import progress
 
 from .acme import LENGTHS, Acme
 from .database import audit, now
@@ -151,6 +152,8 @@ class Administration:
         algorithm: str | None,
         force: bool,
     ) -> int:
+        logger = logging.getLogger("clm")
+        progress(logger, "Checking stored certificate for %s", identifier)
         with publication_lock(self.repo.lock, write=True):
             self.repo.reconcile(repairing=identifier)
             row = self.repo.certificate(identifier)
@@ -165,6 +168,9 @@ class Administration:
                 raise ValueError("Use rotate-key --key to change the key algorithm")
             usable = bool(row and self._usable(row))
             if operation == "issue" and usable:
+                progress(
+                    logger, "Using the existing certificate at generation %s", row["generation"]
+                )
                 return row["generation"]
             if row is None:
                 row = self.repo.ensure(identifier, key)
@@ -174,7 +180,9 @@ class Administration:
                 (now(), identifier),
             )
         engine = self.engine()
+        progress(logger, "Looking up the public DNS challenge for %s", identifier)
         target = engine.route.discover(identifier)
+        progress(logger, "Using Route 53 account %s for %s", target.account, target.record)
         migrating = (row["account"], row["alias"], row["zone"]) != (
             target.account,
             target.alias,
@@ -204,11 +212,25 @@ class Administration:
             # Reuse a successful ACME result after an interrupted publication.
             resumed = marker.exists() and read_regular(marker, 4096, private=True) == record
             if not resumed:
+                if issue:
+                    progress(
+                        logger,
+                        "Requesting a certificate from Let's Encrypt; waiting for DNS validation if required",
+                    )
+                elif forced:
+                    progress(logger, "Requesting certificate reissuance from Let's Encrypt")
+                else:
+                    progress(logger, "Checking whether Let's Encrypt renewal is due")
                 changed = engine.obtain(target, identifier, key, issue=issue, force=forced)
                 if changed:
                     write_atomic(marker, record)
                 elif not usable:
                     raise ValueError("ACME skipped a certificate that requires repair")
+                else:
+                    progress(logger, "Renewal is not due; the existing certificate is still valid")
+            else:
+                progress(logger, "Resuming publication of the existing ACME result")
+            progress(logger, "Exporting and validating the certificate and key")
             material = engine.export(target, identifier, key)
             candidate = validate(
                 identifier,
@@ -249,6 +271,7 @@ class Administration:
             if migration.path.exists():
                 migration.restore()
             raise
+        progress(logger, "Checking the certificate into the local repository")
         with publication_lock(self.repo.lock, write=True):
             version = self.repo.publish(
                 row,
@@ -294,6 +317,7 @@ class Administration:
         return version
 
     def import_certificate(self, identifier: str, directory: Path) -> int:
+        progress(logging.getLogger("clm"), "Validating certificate files for %s", identifier)
         with self.operation_lock(), publication_lock(self.repo.lock, write=True):
             self.repo.reconcile()
             material = read_material(directory)
@@ -331,6 +355,11 @@ class Administration:
                     (identifier,),
                 )
             try:
+                progress(
+                    logging.getLogger("clm"),
+                    "Requesting revocation of %s from Let's Encrypt",
+                    identifier,
+                )
                 engine.revoke(target, identifier, row["algorithm"])
             except ValueError as exc:
                 self.event("revoke", identifier=identifier, detail=str(exc))
@@ -382,6 +411,7 @@ class Administration:
                 with self.db.connect() as connection:
                     client_id = self._client(connection, name)["id"]
                 self._recorded_obtain(identifier, "issue")
+                progress(logging.getLogger("clm"), "Saving access for client %s", name)
                 with self.db.connect(write=True) as connection:
                     client = self._client(connection, name)
                     if client["id"] != client_id:
@@ -434,4 +464,9 @@ class Administration:
                 else:
                     raise ValueError("Invalid client operation")
             audit(connection, operation, f"administrator for {name}", identifier=identifier)
+        if token:
+            message = (
+                "Created client %s" if operation == "add" else "Rotated the access token for %s"
+            )
+            progress(logging.getLogger("clm"), message, name)
         return token

@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 from cryptography import x509
 
-from clm_common.certificate import (
+from clm_client.certificate import unpack_bundle
+from clm_server.certificate import (
     json_bytes,
     make_bundle,
     parse_manifest,
-    unpack_bundle,
     validate,
 )
-from clm_common.filesystem import read_regular
+from clm_server.filesystem import read_regular
 
 
 @pytest.mark.parametrize("name", ["example.com", "*.example.com"])

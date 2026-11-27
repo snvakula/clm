@@ -132,10 +132,10 @@ if [[ $product == server ]]; then
     install -m 0600 -- "$workspace/acme/dnsapi/dns_aws.sh" "$root/acme/dnsapi/"
 fi
 publish_application "$root/app" "$workspace"
-switch_link "$root/bin/$program" "$root/app/bin/$program"
+install -m 0755 -- "$workspace/bin/$program" "$root/bin/$program"
 switch_link "/usr/local/bin/$program" "$root/bin/$program"
 if [[ $product == server ]]; then
-    switch_link "$root/bin/clmd" "$root/app/bin/clmd"
+    install -m 0755 -- "$workspace/bin/clmd" "$root/bin/clmd"
     switch_link /usr/local/bin/clmd "$root/bin/clmd"
 fi
 remove_legacy_layout "$product" "$root"

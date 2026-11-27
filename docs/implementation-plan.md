@@ -57,7 +57,7 @@ The feature branch retains the original foundation. The [specification](specific
 | 18. Automatic renewal and updates | Persistent systemd timers and UTC schedule settings. Actual timer execution on deployed hosts pending. |
 | 19. Logging and monitoring | Structured logs and journal output, rotation, SQLite audit and machine-readable expiry and failure status. |
 | 20. Installation and upgrades | Native installers with versioned releases, dependency hashes and state preservation. Full privileged installation, repetition and upgrade pending. |
-| 21. Source layout | Shared validation and distribution format with separate server and client entry points, production locks and CI. |
+| 21. Source layout | Independent server and client packages, compatible distribution format, separate production locks and CI. |
 | 22. Testing | Automated unit, integration, security and failure recovery checks. Host-level privilege and live acceptance are documented separately. |
 | 23. Documentation | Installation, AWS IAM, DNS, CLI, API, service integration, migration, recovery and operational guides. |
 | 24. Acceptance workflow | Mocked issuance, shared wildcard, authorisation, key rotation and rollback passed. Full workflow on administrator-controlled domains is pending. |

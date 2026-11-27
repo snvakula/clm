@@ -6,7 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
-from clm_common.config import load_config
+from .config import load_config
+from .logging import progress
 
 
 class Profiles:
@@ -47,6 +48,12 @@ class Profiles:
         if operation not in profile:
             return
         name = profile["name"]
+        descriptions = {
+            "check": "Checking configuration for",
+            "reload": "Reloading",
+            "verify": "Verifying",
+        }
+        progress(self.logger, "%s %s", descriptions[operation], name)
         try:
             subprocess.run(
                 profile[operation],

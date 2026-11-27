@@ -7,8 +7,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from clm_common.certificate import MAX_BUNDLE, MAX_FILE, parse_manifest
-from clm_common.identity import storage_id
+from .certificate import MAX_BUNDLE, MAX_FILE, parse_manifest
+from .identity import storage_id
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
