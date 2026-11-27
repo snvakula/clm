@@ -1,16 +1,13 @@
 --- a/dnsapi/dns_aws.sh
 +++ b/dnsapi/dns_aws.sh
-@@ -17,365 +17,62 @@
- 
- AWS_WIKI="https://github.com/acmesh-official/acme.sh/wiki/How-to-use-Amazon-Route53-API"
- 
+@@ -20 +20,5 @@
 -########  Public functions #####################
 +# CLM delegates XML validation and conditional record updates to its local helper.
 +# A private per-account journal records the challenge before its first DNS write.
 +_clm_records() {
 +  "$CLM_PYTHON" -m clm_server.dns_records "$1"
 +}
- 
+@@ -22 +26,14 @@
 -#Usage: dns_myapi_add   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
 +_clm_zone() {
 +  [ "$1" = "$CLM_CHALLENGE_RECORD" ] || return 1
@@ -26,7 +23,7 @@
 +  aws_rest GET "2013-04-01$_domain_id/rrset" "maxitems=1&name=$1&type=TXT"
 +}
 +
- dns_aws_add() {
+@@ -24,52 +41,4 @@
 -  fulldomain=$1
 -  txtvalue=$2
 -
@@ -83,8 +80,7 @@
 +  _clm_change="$(printf '%s' "$response" | CLM_TXT_VALUE="$2" _clm_records add)" || return 1
 +  if aws_rest POST "2013-04-01$_domain_id/rrset" "" "$_clm_change" &&
 +    _contains "$response" "ChangeResourceRecordSetsResponse"; then
-     return 0
-   fi
+@@ -78,15 +47,6 @@
 -
 -  _debug "Adding records"
 -
@@ -106,13 +102,11 @@
 +    _contains "$response" "<Code>InvalidChangeBatch</Code>" ||
 +    _contains "$response" "<Code>AccessDenied</Code>"; then
 +    _clm_records clear
-   fi
+@@ -94 +53,0 @@
 -  _sleep 1
-   return 1
- }
- 
+@@ -98 +56,0 @@
 -#fulldomain txtvalue
- dns_aws_rm() {
+@@ -100,9 +58,7 @@
 -  fulldomain=$1
 -  txtvalue=$2
 -
@@ -129,7 +123,7 @@
 +  if [ -n "$_clm_change" ]; then
 +    aws_rest POST "2013-04-01$_domain_id/rrset" "" "$_clm_change" &&
 +      _contains "$response" "ChangeResourceRecordSetsResponse" || return 1
-   fi
+@@ -110,41 +66 @@
 -
 -  _debug "First detect the root zone"
 -  if ! _get_root "$fulldomain"; then
@@ -172,8 +166,7 @@
 -  _sleep 1
 -  return 1
 +  _clm_records clear
- }
- 
+@@ -153,47 +69,4 @@
 -####################  Private functions below ##################################
 -
 -_get_root() {
@@ -225,8 +218,7 @@
 +  _clm_pending="$(_clm_records pending)" || return 1
 +  [ -n "$_clm_pending" ] || return 0
 +  dns_aws_rm "$CLM_CHALLENGE_RECORD" "$_clm_pending"
- }
- 
+@@ -202,7 +75,3 @@
 -_use_container_role() {
 -  # automatically set if running inside ECS
 -  if [ -z "$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" ]; then
@@ -237,7 +229,7 @@
 +# Send signed Route 53 requests without placing credentials or values in argv.
 +aws_rest() {
 +  response="$(printf '%s' "$4" | "$CLM_PYTHON" -m clm_server.dns_records request "$1" "$2" "$3")"
- }
+@@ -210,172 +78,0 @@
 -
 -_use_instance_role() {
 -  _instance_role_name_url="http://169.254.169.254/latest/meta-data/iam/security-credentials/"

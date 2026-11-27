@@ -13,7 +13,7 @@ The feature branch retains the original foundation. The [specification](specific
 | 5. Client application | Implemented enrolment, certificate installation, scheduled updates, local profiles and recoverable grouped activation. |
 | 6. Installation and system integration | Added native Debian 13 installers, isolated virtual environments, Nginx, systemd and log rotation. Full privileged install and upgrade acceptance is pending. |
 | 7. Testing and security review | Local automated suite, lint, formatting, dependency checks, source patch checks and Nginx configuration checks passed. Production deployment acceptance is pending. |
-| 8. Documentation and pull request | Administrator, client and operations guides are complete. The single feature-branch pull request is for review and manual acceptance. |
+| 8. Documentation and pull request | Administrator, client and operations guides are complete. [Pull request #1](https://github.com/snvakula/clm/pull/1) is open for review and manual acceptance. |
 
 ## Test results
 
