@@ -12,6 +12,8 @@ sudo ./scripts/install-server.sh
 
 The installer places the working configuration in `/opt/clm/config/`. Edit `clm.yaml` for the ACME account contact email, `route53.yaml` for accounts and aliases, and `aws/credentials` for the matching AWS profiles. The Route 53 file includes the mapping layout for two AWS accounts in comments. Re-running the installer preserves configured files.
 
+The installer links `clm` and `clmd` from `/usr/local/bin/` to the launchers in `/opt/clm/bin/`. If either name is already in use by another file or link, resolve the conflict before re-running the installer.
+
 Edit `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
 
 The installer stores the CLM units in `/opt/clm/systemd/`, links them from `/etc/systemd/system/`, and enables and starts the renewal timer. Enable the distribution socket when the host configuration is ready.
@@ -62,7 +64,7 @@ Run the administrative executable at `/opt/clm/bin/clm` as root. Quote wildcard 
 | `clm status [--json]` | Reports certificate expiry, renewal attempts and repository inconsistencies. |
 | `clm check`, `clm version` | Runs local checks or prints the application version. |
 
-Supported key algorithms are `ec-256` (default), `ec-384`, `rsa-2048`, `rsa-3072` and `rsa-4096`. Non-forced renewal honours acme.sh exit status 2 as a skipped operation. Avoid forced retries during CA rate limiting.
+Supported key algorithms are `ec-256` (default), `ec-384`, `rsa-2048`, `rsa-3072` and `rsa-4096`. When acme.sh reports that renewal is not due, CLM keeps the current generation and skips export unless it is recovering an interrupted renewal. Avoid forced retries during CA rate limiting.
 
 ## Import existing certificates
 

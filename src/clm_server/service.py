@@ -208,10 +208,15 @@ class Administration:
         if migrating and row["account"] == target.account:
             migration.begin(intent)
         record = json_bytes(intent)
+        in_flight = json_bytes({**intent, "awaiting_acme_result": True})
+        material = None
         try:
-            # Reuse a successful ACME result after an interrupted publication.
-            resumed = marker.exists() and read_regular(marker, 4096, private=True) == record
-            if not resumed:
+            previous_operation = (
+                read_regular(marker, 4096, private=True) if marker.exists() else None
+            )
+            if previous_operation != record:
+                # Record the attempt before acme.sh can change its working certificate.
+                write_atomic(marker, in_flight)
                 if issue:
                     progress(
                         logger,
@@ -224,10 +229,15 @@ class Administration:
                 changed = engine.obtain(target, identifier, key, issue=issue, force=forced)
                 if changed:
                     write_atomic(marker, record)
-                elif not usable:
-                    raise ValueError("ACME skipped a certificate that requires repair")
+                elif forced:
+                    raise ValueError("ACME skipped a certificate that requires reissuance")
+                elif previous_operation == in_flight:
+                    progress(logger, "Checking the ACME result of an interrupted renewal")
                 else:
+                    marker.unlink()
+                    sync_directory(marker.parent)
                     progress(logger, "Renewal is not due; the existing certificate is still valid")
+                    return row["generation"]
             else:
                 progress(logger, "Resuming publication of the existing ACME result")
             progress(logger, "Exporting and validating the certificate and key")
@@ -267,7 +277,8 @@ class Administration:
                     ):
                         raise ValueError("ACME reused the previous private key")
         except (OSError, ValueError):
-            marker.unlink(missing_ok=True)
+            if material is not None or migration.path.exists():
+                marker.unlink(missing_ok=True)
             if migration.path.exists():
                 migration.restore()
             raise

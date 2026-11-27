@@ -421,25 +421,43 @@ def test_restart_web_servers_checks_activity_and_restarts_only_running_units(tmp
     ]
 
 
-@pytest.mark.parametrize("role", ["server", "client"])
-def test_installer_removes_only_its_old_cli_links(tmp_path, role):
-    old = tmp_path / "command"
-    previous = "/opt/clm/bin/clm" if role == "server" else "/opt/clm-client/bin/clm-client"
+@pytest.mark.parametrize(
+    ("role", "target"),
+    [
+        ("server", "/opt/clm/bin/clm"),
+        ("server", "/opt/clm/bin/clmd"),
+        ("client", "/opt/clm-client/bin/clm-client"),
+    ],
+)
+def test_installer_creates_cli_links_and_preserves_conflicts(tmp_path, role, target):
+    link = tmp_path / target.rsplit("/", 1)[1]
     command = [
         "bash",
         "-euc",
-        'source "$1"; remove_legacy_link "$2" "$3"',
+        'source "$1"; install_cli_link "$2" "$3"',
         "test",
         str(ROOT / "scripts" / INSTALLERS[role]),
-        str(old),
-        previous,
+        str(link),
+        target,
     ]
-    old.symlink_to(previous)
     subprocess.run(command, check=True)
-    assert not old.is_symlink()
-    old.symlink_to("/usr/bin/operator-command")
     subprocess.run(command, check=True)
-    assert old.is_symlink()
+    assert str(link.readlink()) == target
+
+    link.unlink()
+    link.symlink_to("/usr/bin/operator-command")
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert str(link.readlink()) == "/usr/bin/operator-command"
+
+    link.unlink()
+    link.write_text("operator command\n")
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert link.read_text() == "operator command\n"
+
+    link.unlink()
+    link.mkdir()
+    assert subprocess.run(command, capture_output=True).returncode != 0
+    assert not list(link.iterdir())
 
 
 def test_server_identity_migrates_to_clm_without_recreating_accounts(tmp_path):

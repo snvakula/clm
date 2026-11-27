@@ -523,3 +523,62 @@ def test_client_rejects_a_config_readable_by_other_users(installed):
     client.config_file.chmod(0o644)
     with pytest.raises(ValueError, match="readable only by their owner"):
         client.update(state)
+
+
+def test_renewal_not_due_finishes_without_exporting(server, monkeypatch, caplog):
+    from clm_server.cli import dispatch, parser
+
+    admin, engine, _ = server
+    admin.obtain(WILDCARD, "issue")
+
+    def unexpected_export(*args):
+        pytest.fail("Renewal is not due, so there is nothing to export")
+
+    monkeypatch.setattr(engine, "export", unexpected_export)
+    engine.skip = True
+    cli = parser()
+    with caplog.at_level(logging.INFO, logger="clm"):
+        assert dispatch(admin, cli.parse_args(["cert", "renew", "--all"]), cli) == 0
+    assert "Renewal is not due" in caplog.text
+    assert "Exporting and validating" not in caplog.text
+    assert admin.repo.files.current(WILDCARD) == 1
+    assert admin.repo.certificate(WILDCARD)["last_error"] is None
+    assert not admin._candidate("first", WILDCARD).exists()
+
+
+def test_failed_export_retries_ready_certificate_without_another_acme_request(server, monkeypatch):
+    admin, engine, _ = server
+    admin.obtain(WILDCARD, "issue")
+
+    def failed_export(*args):
+        raise ValueError("ACME install-cert failed with exit status 1")
+
+    with monkeypatch.context() as patches:
+        patches.setattr(engine, "export", failed_export)
+        with pytest.raises(ValueError, match="install-cert failed"):
+            admin.obtain(WILDCARD, "renew")
+    assert admin.repo.files.current(WILDCARD) == 1
+    assert admin._candidate("first", WILDCARD).is_file()
+    requested = len(engine.calls)
+    assert admin.obtain(WILDCARD, "renew") == 2
+    assert len(engine.calls) == requested
+    assert admin.repo.certificate(WILDCARD)["last_error"] is None
+
+
+def test_renewal_already_in_acme_is_recovered_after_interruption(server, monkeypatch):
+    admin, engine, _ = server
+    admin.obtain(WILDCARD, "issue")
+    obtain = engine.obtain
+
+    def interrupted(*args, **kwargs):
+        obtain(*args, **kwargs)
+        raise RuntimeError("Interrupted after ACME completed")
+
+    with monkeypatch.context() as patches:
+        patches.setattr(engine, "obtain", interrupted)
+        with pytest.raises(RuntimeError, match="Interrupted"):
+            admin.obtain(WILDCARD, "renew")
+    assert admin.repo.files.current(WILDCARD) == 1
+    engine.skip = True
+    assert admin.obtain(WILDCARD, "renew") == 2
+    assert not admin._candidate("first", WILDCARD).exists()

@@ -118,11 +118,12 @@ keep_file() {
         install -m "$mode" -o root -g "$group" -- "$source" "$target"
     fi
 }
-remove_legacy_link() {
+install_cli_link() {
     local link=$1 destination=$2
     if [[ -L $link && $(readlink -- "$link") == "$destination" ]]; then
-        rm -- "$link"
+        return
     fi
+    ln -sT -- "$destination" "$link"
 }
 
 configure_server_identity() {
@@ -260,8 +261,9 @@ PY
     install -m 0600 -- "$workspace/acme/dnsapi/dns_aws.sh" "$root/acme/dnsapi/"
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm" "$workspace/bin/clmd" "$root/bin/"
-    remove_legacy_link /usr/local/bin/clm "$root/bin/clm"
-    remove_legacy_link /usr/local/bin/clmd "$root/bin/clmd"
+    (umask 022; mkdir -p /usr/local/bin)
+    install_cli_link /usr/local/bin/clm "$root/bin/clm"
+    install_cli_link /usr/local/bin/clmd "$root/bin/clmd"
     remove_legacy_layout "$root"
     flock -u 8
     install_server_units "$sources" "$root" /etc/systemd/system
