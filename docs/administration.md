@@ -14,11 +14,10 @@ The installer places the working configuration in `/opt/clm/config/`. Edit `clm.
 
 Edit `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
 
-Load and enable the installed CLM units when the host configuration is ready.
+The installer stores the CLM units in `/opt/clm/systemd/`, links them from `/etc/systemd/system/`, and enables and starts the renewal timer. Enable the distribution socket when the host configuration is ready.
 
 ```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now clmd.socket clm-renew.timer
+sudo systemctl enable --now clmd.socket
 ```
 
 The socket at `/opt/clm/run/clmd.sock` is accessible to the standard Debian Nginx group `www-data`. There is no application TCP listener.
