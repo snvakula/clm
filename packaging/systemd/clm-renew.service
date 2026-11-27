@@ -6,7 +6,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 User=root
-Group=clm-api
+Group=clm
 UMask=0077
 ExecStart=/opt/clm/bin/clm cert renew --all
 NoNewPrivileges=yes

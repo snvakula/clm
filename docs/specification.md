@@ -12,7 +12,7 @@ The system must provide:
 - Secure certificate and private key distribution.
 - Certificate reuse across multiple authorised clients.
 - Simple client-side installation and automatic updates.
-- Service configuration validation, graceful reload and automatic rollback.
+- Local certificate update hooks and automatic certificate rollback.
 - Centralised access management and auditing.
 
 The system must support migration from existing certificate distribution services and individual update scripts.
@@ -138,7 +138,7 @@ System-level integration files may be installed outside this directory where req
 
 - systemd units under `/etc/systemd/system/`.
 - Nginx configuration under `/etc/nginx/`.
-- CLI symbolic links under `/usr/local/bin/`.
+- CLI executables under the corresponding application installation directory.
 - Operating system packages and system users.
 
 Do not create application-specific storage directories under `/var/lib`, `/var/log` or `/etc`.
@@ -692,8 +692,7 @@ All application-specific client files must be stored under `/opt/clm-client`.
 ├── venv/
 ├── config/
 │   ├── client.yaml
-│   ├── credentials
-│   └── services.d/
+│   └── hooks.d/
 ├── certificates/
 ├── data/
 ├── logs/
@@ -706,52 +705,15 @@ The client must not require AWS credentials, acme.sh or access to the DNS provid
 
 ## 14. Client CLI
 
-### 14.1 Initialisation
+Set the HTTPS server URL and client token in `/opt/clm-client/config/client.yaml`. The file is owned by the authorised local account and uses mode `0600`. Read the token from this file for each update.
 
 ```bash
-clm-client init https://clm.example.com
+/opt/clm-client/bin/clm-client update
+/opt/clm-client/bin/clm-client status
+/opt/clm-client/bin/clm-client version
 ```
 
-Request the access token interactively without echoing it.
-
-Validate the token against the server before saving the configuration.
-
-Support secure non-interactive provisioning through a protected credentials file or standard input.
-
-Do not require tokens to be passed as command-line arguments.
-
-### 14.2 Certificate management
-
-```bash
-clm-client available
-clm-client install git.example.com
-clm-client install '*.example.net'
-clm-client install '*.example.net' --service nginx
-clm-client list
-clm-client show '*.example.net'
-clm-client update
-clm-client update '*.example.net'
-clm-client remove '*.example.net'
-clm-client status
-clm-client version
-```
-
-Installation must:
-
-1. Verify that the client is authorised to obtain the certificate.
-2. Download the current certificate generation.
-3. Validate all certificate material.
-4. Install the generation atomically.
-5. Register the certificate for future automatic updates.
-6. Associate the certificate with the requested local service profile, if specified.
-
-Installing an already installed certificate must be idempotent.
-
-Installing a certificate must not automatically rewrite the application's configuration files.
-
-Display the resulting certificate and private key paths for the administrator.
-
-Removing a certificate must not silently break an associated service. Require explicit confirmation where appropriate.
+An update lists all certificates assigned to this client's token and synchronises those certificates in a single batch. A new assignment is downloaded automatically. Status reports the installed generations, full certificate and private key paths, and the last update result. It accepts `--json` for automation.
 
 ## 15. Client certificate storage
 
@@ -785,100 +747,17 @@ Retain the current and previous generations by default.
 
 ## 16. Client update procedure
 
-For each installed certificate:
+List the certificates available to the client over the authenticated HTTPS API. For each assigned certificate, fetch the current manifest and compare it with the installed generation. Skip unchanged downloads. Stage the changed material, verify archive membership and checksums, and validate the identity, time validity, trust chain and certificate-to-key pairing before publication.
 
-1. Retrieve the current remote manifest.
-2. Compare the remote generation and checksums with the local state.
-3. Skip downloading unchanged certificate material.
-4. Download the required immutable generation into a protected staging directory.
-5. Validate archive contents and reject unexpected files.
-6. Verify SHA-256 checksums.
-7. Verify certificate identity, validity and trust chain.
-8. Verify that the private key matches the certificate.
-9. Apply ownership and permissions.
-10. Atomically switch the current generation.
-11. Execute local service configuration checks.
-12. Gracefully reload affected services.
-13. Verify successful activation where supported.
-14. Commit the new generation.
-15. Remove obsolete generations and temporary files.
+Protect updates with an inter-process lock and switch each certificate and key together using the generation link. Stage and validate the entire batch before activating any generation. Run local hooks after activating the changed batch. Retain the previous generations and remove temporary or obsolete files after committing the batch.
 
-Certificate and private key updates must be treated as one transaction.
+A failed download, validation, activation or hook returns a non-zero exit code. Restore previous certificate links if the batch was partially activated. A server outage or a lost grant leaves the previously installed files available.
 
-Do not overwrite live certificate and private key files independently.
+## 17. Certificate update hooks
 
-Protect updates with an inter-process lock.
+The client runs executable scripts from `/opt/clm-client/config/hooks.d/` in filename order after a batch changes certificate material. Hooks are owned by the local CLM client account and protected from modification by other accounts. Each script has an execution timeout. The hook environment provides the batch's changed identifiers and event. If the update is rolled back, attempted hooks receive a rollback event after the previous certificate links are restored.
 
-Do not reload services if certificate material has not changed.
-
-Where multiple certificates affect the same service, consolidate updates and reload the service once where practical.
-
-If any validation, activation or reload operation fails:
-
-- Restore the previous generation.
-- Revalidate the previous configuration.
-- Reload the affected service where required.
-- Report the failure.
-- Return a non-zero exit code.
-
-If rollback fails, preserve the necessary recovery files and clearly report their locations.
-
-An unavailable CLM server must not cause removal or replacement of existing local certificates.
-
-An authentication or authorisation failure must not automatically delete previously installed certificate material.
-
-## 17. Local service profiles
-
-Service profiles must be stored locally under:
-
-```text
-/opt/clm-client/config/services.d/
-```
-
-Example `nginx.yaml`:
-
-```yaml
-name: nginx
-
-check:
-  - nginx
-  - -t
-
-reload:
-  - systemctl
-  - reload
-  - nginx
-```
-
-Example `postfix.yaml`:
-
-```yaml
-name: postfix
-
-check:
-  - postfix
-  - check
-
-reload:
-  - systemctl
-  - reload
-  - postfix
-```
-
-Requirements:
-
-- Support custom local service profiles.
-- Execute commands using argument arrays.
-- Apply execution timeouts.
-- Check command exit codes.
-- Prefer graceful reload over restart.
-- Do not reload services unnecessarily.
-- Do not execute arbitrary commands received from the CLM server.
-- Protect service profile configuration from modification by unprivileged users.
-
-Initially provide a fully supported Nginx profile.
-
-Additional service integrations must not be advertised as supported until tested.
+The installed `restart-web-servers` example hook calls `/opt/clm-client/bin/restart-web-servers`. It restarts running Apache and Nginx units if present. The client publishes certificate files and executes local hooks. Other service configuration is managed by the operator.
 
 ## 18. Automatic renewal and updates
 
@@ -976,7 +855,7 @@ Log at least:
 - Authentication failures.
 - Certificate and private key downloads.
 - Client installation and updates.
-- Service reloads.
+- Certificate hook execution and failures.
 - Rollback operations.
 - DNS validation failures.
 
@@ -992,7 +871,7 @@ Provide native installation scripts:
 
 ```text
 install-server.sh
-install-client.sh
+install-client-debian.sh
 ```
 
 Provide documented uninstall procedures.
@@ -1006,10 +885,10 @@ Installation scripts must:
 - Create Python virtual environments.
 - Install pinned Python dependencies.
 - Install systemd units.
-- Create CLI symbolic links.
+- Install CLI executables under the application’s bin directory.
 - Install or provide the Nginx configuration.
 - Validate the resulting configuration.
-- Enable the appropriate services and timers.
+- Install service and timer definitions for the administrator to enable.
 - Be safe to execute repeatedly.
 
 Do not overwrite existing credentials, configuration or certificate data during repeated installations or upgrades.
@@ -1048,7 +927,7 @@ clm/
 │   └── nginx/
 ├── scripts/
 │   ├── install-server.sh
-│   └── install-client.sh
+│   └── install-client-debian.sh
 ├── examples/
 └── docs/
 ```
@@ -1119,7 +998,7 @@ Tests must cover at least:
 - Malicious archive rejection.
 - Atomic generation switching.
 - Failed service validation.
-- Failed service reload.
+- Failed certificate hook and restoration of previous links.
 - Successful rollback.
 - Interrupted update recovery.
 - Unavailable CLM server.
@@ -1184,18 +1063,11 @@ clm client add kb
 clm client grant kb '*.example.com'
 ```
 
-On the Git server:
+On each of the Git, Jira and KB hosts, set the CLM server URL and the token assigned to that host in `/opt/clm-client/config/client.yaml`. Fetch all certificates assigned to the client and inspect the resulting paths.
 
 ```bash
-clm-client init https://clm.example.com
-clm-client install git.example.com --service nginx
-```
-
-On the Jira and KB servers:
-
-```bash
-clm-client init https://clm.example.com
-clm-client install '*.example.com' --service nginx
+/opt/clm-client/bin/clm-client update
+/opt/clm-client/bin/clm-client status
 ```
 
 The system must demonstrate that:
@@ -1207,7 +1079,7 @@ The system must demonstrate that:
 - Certificates delegated to different AWS accounts are issued using the correct credentials.
 - Certificate renewal generates a new private key.
 - Clients receive the renewed certificate and corresponding private key together.
-- Nginx reloads successfully without a full restart.
+- A changed certificate batch triggers the configured local hooks.
 - Failed updates restore the previous working certificate generation.
 - Automatic renewal and client updates execute according to the specified schedules.
 - Repeated installation does not damage existing data.
@@ -1224,7 +1096,7 @@ Implement the project incrementally:
 5. Client authentication and certificate access management.
 6. Distribution API.
 7. Client CLI and atomic certificate installation.
-8. Service profiles and rollback.
+8. Local update hooks and rollback.
 9. Installation scripts and systemd integration.
 10. Automated testing and documentation.
 

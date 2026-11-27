@@ -21,7 +21,7 @@ class UniqueLoader(yaml.SafeLoader):
 
 def load_config(path: Path) -> dict[str, Any]:
     try:
-        value = yaml.load(read_regular(path, 64 * 1024), Loader=UniqueLoader)
+        value = yaml.load(read_regular(path, 64 * 1024, private=True), Loader=UniqueLoader)
     except yaml.YAMLError:
         raise ValueError(f"Invalid YAML configuration in {path.name}") from None
     if not isinstance(value, dict):

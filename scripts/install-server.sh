@@ -118,10 +118,47 @@ keep_file() {
         install -m "$mode" -o root -g "$group" -- "$source" "$target"
     fi
 }
-switch_link() {
-    local link=$1 target=$2 temporary="${1}.new"
-    ln -sfn -- "$target" "$temporary"
-    mv -Tf -- "$temporary" "$link"
+remove_legacy_link() {
+    local link=$1 destination=$2
+    if [[ -L $link && $(readlink -- "$link") == "$destination" ]]; then
+        rm -- "$link"
+    fi
+}
+
+configure_server_identity() {
+    local root=$1
+    if id clm >/dev/null 2>&1 && id clm-api >/dev/null 2>&1; then
+        echo 'Both the old and new CLM users exist. Resolve the account conflict before installing.' >&2
+        return 1
+    fi
+    if getent group clm >/dev/null && getent group clm-api >/dev/null; then
+        echo 'Both the old and new CLM groups exist. Resolve the group conflict before installing.' >&2
+        return 1
+    fi
+
+    # Renaming the installed service identity preserves existing file ownership.
+    if id clm-api >/dev/null 2>&1; then
+        if [[ $(id -u clm-api) == 0 || $(id -gn clm-api) != clm-api ]]; then
+            echo 'The previous CLM identity does not match the installed service account.' >&2
+            return 1
+        fi
+        usermod --login clm clm-api
+    fi
+    if ! getent group clm >/dev/null; then
+        if getent group clm-api >/dev/null; then
+            groupmod --new-name clm clm-api
+        else
+            groupadd --system clm
+        fi
+    fi
+    if ! id clm >/dev/null 2>&1; then
+        useradd --system --gid clm --home-dir "$root" \
+            --no-create-home --shell /usr/sbin/nologin clm
+    fi
+    if [[ $(id -u clm) == 0 || $(id -gn clm) != clm ]]; then
+        echo 'The clm identity must be unprivileged and use the clm group.' >&2
+        return 1
+    fi
 }
 
 install_server() {
@@ -161,23 +198,17 @@ install_server() {
     workspace=$(mktemp -d "$root/run/install.XXXXXXXX")
     trap 'rm -rf -- "$workspace"' EXIT
 
-    getent group clm-api >/dev/null || groupadd --system clm-api
-    id clm-api >/dev/null 2>&1 || useradd --system --gid clm-api --home-dir "$root" \
-        --no-create-home --shell /usr/sbin/nologin clm-api
-    if [[ $(id -u clm-api) == 0 || $(id -gn clm-api) != clm-api ]]; then
-        echo 'The clm-api identity must be unprivileged and use the clm-api group.' >&2
-        exit 1
-    fi
-    install -d -m 3770 -o root -g clm-api "$root/data"
-    install -d -m 2750 -o root -g clm-api "$root/data/certificates" "$root/logs"
+    configure_server_identity "$root"
+    install -d -m 3770 -o root -g clm "$root/data"
+    install -d -m 2750 -o root -g clm "$root/data/certificates" "$root/logs"
     install -d -m 0700 "$root/acme" "$root/acme/instances"
     install_server_configuration "$sources" "$root/config" /etc/nginx/sites-available/clm
-    keep_file 0640 clm-api /dev/null "$root/run/publication.lock"
+    keep_file 0640 clm /dev/null "$root/run/publication.lock"
     keep_file 0600 root /dev/null "$root/run/operations.lock"
     exec 8<>"$root/run/operations.lock"
     flock -x 8
     if [[ ! -e $root/logs/clmd.log ]]; then
-        install -m 0600 -o clm-api -g clm-api /dev/null "$root/logs/clmd.log"
+        install -m 0600 -o clm -g clm /dev/null "$root/logs/clmd.log"
     fi
 
     local revision=5567d7fe7298fd37aca53194885ba444c6678669
@@ -198,7 +229,7 @@ install_server() {
     prepare_server_environment "$sources" "$root" "$workspace"
     environment="$root/venv"
     # SQLite derives its WAL and shared-memory permissions from the database mode.
-    keep_file 0660 clm-api /dev/null "$root/data/clm.db"
+    keep_file 0660 clm /dev/null "$root/data/clm.db"
     PYTHONPATH="$workspace" "$environment/bin/python" -B - "$root/data/clm.db" <<'PY'
 import sys
 from pathlib import Path
@@ -220,8 +251,8 @@ PY
     install -m 0600 -- "$workspace/acme/dnsapi/dns_aws.sh" "$root/acme/dnsapi/"
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm" "$workspace/bin/clmd" "$root/bin/"
-    switch_link /usr/local/bin/clm "$root/bin/clm"
-    switch_link /usr/local/bin/clmd "$root/bin/clmd"
+    remove_legacy_link /usr/local/bin/clm "$root/bin/clm"
+    remove_legacy_link /usr/local/bin/clmd "$root/bin/clmd"
     remove_legacy_layout "$root"
     echo 'Installed CLM server. Configuration directory /opt/clm/config.'
     echo 'Nginx site configuration is at /etc/nginx/sites-available/clm.'

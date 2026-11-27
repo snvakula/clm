@@ -10,7 +10,7 @@ The feature branch retains the original foundation. The [specification](specific
 | 2. Server core and certificate repository | Implemented SQLite migration v1, transactional metadata, immutable generations, durable publication and reconciliation. |
 | 3. ACME and Route 53 integration | Implemented production Let's Encrypt, isolated per-account engine state, public delegation checks, safe TXT changes and migration recovery. Real CA and AWS acceptance is pending. |
 | 4. Server CLI and distribution API | Implemented administration, certificate import, client access control, token lifecycle, audits and authenticated, leased distribution. |
-| 5. Client application | Implemented enrolment, certificate installation, scheduled updates, local profiles and recoverable grouped activation. |
+| 5. Client application | The Debian client reads the URL and token from YAML, updates all assignments, and runs executable hooks after certificate changes. |
 | 6. Installation and system integration | Added native Debian 13 installers, isolated virtual environments, Nginx, systemd and log rotation. Full privileged install and upgrade acceptance is pending. |
 | 7. Testing and security review | Local automated suite, lint, formatting, dependency checks, source patch checks and Nginx configuration checks passed. Production deployment acceptance is pending. |
 | 8. Documentation and pull request | Administrator, client and operations guides are complete. [Pull request #1](https://github.com/snvakula/clm/pull/1) is open for review and manual acceptance. |
@@ -27,7 +27,7 @@ The feature branch retains the original foundation. The [specification](specific
 ## Decisions and known limitations
 
 - Approved deviation in §7.4. Upstream acme.sh 3.1.7 `dns_aws_rm` could delete the whole TXT record set. CLM uses the reviewed, pinned plugin patch, preserving other TXT values with a conditional, transactional change and verifying the exact configured public hosted zone. The patch also keeps AWS signing credentials and challenge values out of process arguments. A simple TXT record set is required at the alias endpoint.
-- Nginx is the supported local service profile. The deployment supplies the TLS bootstrap certificate and site ACLs.
+- The client ships an optional web server restart hook. The server deployment supplies the TLS bootstrap certificate and site ACLs.
 - Google Public DNS over HTTPS is the public resolver. Authorised deployment networks must permit the outbound request.
 - Imported certificates are eligible for automatic renewal after their first successful explicit renewal through the selected ACME account. An unresolved CA revocation can require operator confirmation from the issuer.
 - Multi-SAN certificates, alternative ACME environments and application-level encryption are outside scope. The deployment requires encrypted underlying storage and backups.
@@ -53,7 +53,7 @@ The feature branch retains the original foundation. The [specification](specific
 | 14. Client CLI | Secure enrolment, available certificates, install, inspection, update and guarded removal. |
 | 15. Client storage | Versioned generations with stable paths and current and previous retention. |
 | 16. Client updates | Bounded manifest and archive verification, serialised switching, service checks, rollback and interrupted update recovery. |
-| 17. Profiles | Local-only argument arrays, timeouts, exit status and Nginx check, reload and verification profile. Live Nginx reload pending. |
+| 17. Update hooks | Local executable scripts, per-hook timeouts, rollback events and a bundled example for running web servers. |
 | 18. Automatic renewal and updates | Persistent systemd timers and UTC schedule settings. Actual timer execution on deployed hosts pending. |
 | 19. Logging and monitoring | Structured logs and journal output, rotation, SQLite audit and machine-readable expiry and failure status. |
 | 20. Installation and upgrades | Native installers with versioned releases, dependency hashes and state preservation. Full privileged installation, repetition and upgrade pending. |

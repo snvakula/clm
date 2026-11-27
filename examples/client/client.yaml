@@ -1,1 +1,3 @@
-request_timeout: 20
+# Use the HTTPS URL and access token assigned by your CLM administrator.
+server: https://clm.example.com
+token: ''

@@ -198,8 +198,12 @@ class TestRemote:
         self.fail = False
         self.modify = lambda payload: payload
 
-    def client(self):
-        return self.http.get("/v1/client", headers=self.headers).json()["name"]
+    def available(self):
+        if self.fail:
+            raise ValueError("Server is unavailable")
+        response = self.http.get("/v1/certificates", headers=self.headers)
+        assert response.status_code == 200
+        return sorted(entry["certificate_id"] for entry in response.json()["certificates"])
 
     def manifest(self, identifier):
         if self.fail:
@@ -223,17 +227,22 @@ def installed(tmp_path, pki, server, monkeypatch):
     token = admin.client_change("git", "add")
     admin.client_change("git", "grant", DOMAIN)
     root = tmp_path / "client"
-    for name in ("config/services.d", "run", "data", "certificates"):
+    for name in ("config/hooks.d", "run", "data", "certificates"):
         (root / name).mkdir(parents=True)
-    (root / "config/services.d/nginx.yaml").write_text(
-        "name: nginx\ncheck: [/bin/true]\nreload: [/bin/true]\nverify: [/bin/true]\n"
-    )
+    config = root / "config/client.yaml"
+    config.write_text(f"server: https://clm.example.com\ntoken: '{token}'\n")
+    config.chmod(0o600)
     client = Client(root, logging.getLogger("test-client"), trust=pki[0])
     remote = TestRemote(http, token)
-    monkeypatch.setattr(client, "_remote", lambda server, token: remote)
-    assert client.initialise("https://clm.example.com", token) == "git"
+    from clm_client_debian import application
+
+    def connect(server, supplied, *, timeout):
+        assert server == "https://clm.example.com" and supplied == token and timeout == 20
+        return remote
+
+    monkeypatch.setattr(application, "Remote", connect)
     state = client.state()
-    client.apply(state, [DOMAIN], service_names=["nginx"])
+    assert client.update(state) == (1, 1)
     return client, remote, state
 
 
@@ -241,46 +250,95 @@ def test_install_idempotency_update_and_unavailable_server(server, installed):
     admin, _, _ = server
     client, remote, state = installed
     info = client.inspect(state, DOMAIN)
-    assert client.credentials.stat().st_mode & 0o777 == 0o600
+    assert client.config_file.stat().st_mode & 0o777 == 0o600
     assert Path(info["private_key_path"]).stat().st_mode & 0o777 == 0o600
-    client.apply(state, [DOMAIN])
+    client.update(state)
     assert remote.downloads == 1
     admin.obtain(DOMAIN, "renew")
-    client.apply(state, [DOMAIN])
+    client.update(state)
     assert remote.downloads == 2
     assert client.inspect(state, DOMAIN)["version"] == 2
     assert client.inspect(state, DOMAIN)["certificate_path"] == info["certificate_path"]
     remote.fail = True
     with pytest.raises(ValueError, match="unavailable"):
-        client.apply(state, [DOMAIN])
+        client.update(state)
     saved = client.state()
     assert saved["last_error"]
     assert client.files.current(DOMAIN) == 2
     assert not list((client.root / "run").iterdir())
 
 
-@pytest.mark.parametrize("operation", ["check", "reload", "verify"])
-def test_activation_failure_recovers_previous_generation(server, installed, monkeypatch, operation):
+def test_one_update_fetches_all_grants_and_only_runs_hooks_on_changes(server, installed):
+    admin, _, _ = server
+    client, remote, state = installed
+    admin.client_change("git", "grant", WILDCARD)
+    admin.obtain(DOMAIN, "renew")
+    for name in ("90-second", "10-first"):
+        hook = client.hooks / name
+        hook.write_text(
+            '#!/bin/sh\nprintf "%s|%s|%s\n" "${0##*/}" "$CLM_HOOK_EVENT" '
+            '"$CLM_UPDATED_CERTIFICATES" >>"$CLM_CLIENT_ROOT/events"\n'
+        )
+        hook.chmod(0o700)
+    assert client.update(state) == (2, 2)
+    assert client.files.current(DOMAIN) == 2
+    assert client.files.current(WILDCARD) == 1
+    contents = (client.root / "events").read_text()
+    assert contents.splitlines() == [
+        "10-first|updated|*.example.com",
+        DOMAIN,
+        "90-second|updated|*.example.com",
+        DOMAIN,
+    ]
+    assert client.update(state) == (2, 0)
+    assert remote.downloads == 3
+    assert (client.root / "events").read_text() == contents
+    admin.client_change("git", "deny", WILDCARD)
+    assert client.update(state) == (1, 0)
+    assert client.files.current(WILDCARD) == 1
+
+
+def test_hook_failure_restores_previous_certificate(server, installed):
     admin, _, _ = server
     client, _, state = installed
     admin.obtain(DOMAIN, "renew")
-    calls = []
-
-    def commands(profile, action):
-        calls.append((profile["name"], action))
-        if action == operation and client.files.current(DOMAIN) == 2:
-            raise ValueError("Mock activation failed")
-
-    monkeypatch.setattr(client.profiles, "execute", commands)
-    with pytest.raises(ValueError, match="Mock activation"):
-        client.apply(state, [DOMAIN])
+    hook = client.hooks / "test-hook"
+    hook.write_text(
+        '#!/bin/sh\nprintf "%s\n" "$CLM_HOOK_EVENT" >>"$CLM_CLIENT_ROOT/events"\n'
+        '[ "$CLM_HOOK_EVENT" = rollback ]\n'
+    )
+    hook.chmod(0o700)
+    with pytest.raises(ValueError, match="test-hook failed during updated"):
+        client.update(state)
     assert client.files.current(DOMAIN) == 1
     assert client.state()["pending"] is None
     assert not client.files.directory(DOMAIN, 2).exists()
-    assert calls[-3:] == [("nginx", "check"), ("nginx", "reload"), ("nginx", "verify")]
+    assert (client.root / "events").read_text().splitlines() == ["updated", "rollback"]
 
 
-def test_client_recovers_killed_update_and_removal(installed):
+def test_failed_download_prevents_partial_batch_activation(server, installed):
+    admin, _, _ = server
+    client, remote, state = installed
+    admin.client_change("git", "grant", WILDCARD)
+    admin.obtain(DOMAIN, "renew")
+    count = 0
+
+    def modify(payload):
+        nonlocal count
+        count += 1
+        return payload if count == 1 else b"invalid bundle"
+
+    remote.modify = modify
+    with pytest.raises(ValueError, match="Invalid certificate bundle"):
+        client.update(state)
+    assert count == 2
+    assert client.files.current(DOMAIN) == 1
+    assert client.files.current(WILDCARD) is None
+    assert not client.files.directory(WILDCARD, 1).exists()
+    assert client.state()["pending"] is None
+
+
+def test_client_recovers_killed_update(installed):
     client, _, state = installed
     state["pending"] = {
         "switching": True,
@@ -297,10 +355,6 @@ def test_client_recovers_killed_update_and_removal(installed):
     client.recover(client.state())
     assert client.files.current(DOMAIN) == 1
     assert not client.files.directory(DOMAIN, 2).exists()
-    with pytest.raises(ValueError, match="associated"):
-        client.remove(client.state(), DOMAIN, False)
-    client.remove(client.state(), DOMAIN, True)
-    assert client.files.current(DOMAIN) is None
 
 
 def test_same_account_change_restores_engine_state(server, monkeypatch):
@@ -395,7 +449,7 @@ def test_client_rejects_bundle_checksum_mismatch(server, installed):
 
     remote.modify = tamper
     with pytest.raises(ValueError, match="bundle does not match"):
-        client.apply(state, [DOMAIN])
+        client.update(state)
     assert client.files.current(DOMAIN) == 1
     assert not client.files.directory(DOMAIN, 2).exists()
 
@@ -455,10 +509,17 @@ def test_client_cli_status_supports_readable_and_json_output(installed, capsys):
     assert DOMAIN in stdout
     assert "Generation" in stdout
     assert " UTC" in stdout
-    assert "- nginx" in stdout
+    assert "Certificate path" in stdout
     assert "{" not in stdout
     assert not stderr
     dispatch(parser.parse_args(["status", "--json"]), client)
     stdout, stderr = capsys.readouterr()
     assert json.loads(stdout)["certificates"][0]["identifier"] == DOMAIN
     assert not stderr
+
+
+def test_client_rejects_a_config_readable_by_other_users(installed):
+    client, _, state = installed
+    client.config_file.chmod(0o644)
+    with pytest.raises(ValueError, match="readable only by their owner"):
+        client.update(state)
