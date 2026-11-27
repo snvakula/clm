@@ -20,6 +20,7 @@ The feature branch retains the original foundation. The [specification](specific
 - A renewal that is not due now completes with the current generation. An interrupted attempt or failed export retains enough state to recover without requesting a duplicate certificate.
 - Both installers restore their command links under `/usr/local/bin/`. Repeated installation preserves correct links and reports a conflict if a name belongs to another file or link.
 - On Debian 13 Python 3.13, all 68 tests passed with the pinned acme.sh archive and Debian Nginx available. Ruff and ShellCheck passed. Full installation, upgrade and the renewal timer still need verification on the deployment host.
+- The client installer now sets the certificate directory to mode `0750` on a fresh install and upgrade. The permission regression test verifies that existing generation directories and private keys retain their modes. All 69 tests, Ruff, ShellCheck and dependency audits passed.
 
 ## Test results
 

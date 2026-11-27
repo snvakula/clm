@@ -9,6 +9,8 @@ sudoedit /opt/clm-client/config/client.yaml
 
 The installer links `/usr/local/bin/clm-client` to `/opt/clm-client/bin/clm-client`. If the name is already in use by another file or link, resolve the conflict before re-running the installer.
 
+The installer sets `/opt/clm-client/certificates/` to mode `0750` on installation and upgrade. Private key files use mode `0600` by default.
+
 Set the HTTPS address of your CLM server and the token assigned to this client. Keep the file owned by root and at mode `0600`.
 
 ```yaml
