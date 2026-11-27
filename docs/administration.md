@@ -4,15 +4,22 @@
 
 Use a Debian 13 host with encrypted underlying storage mounted at `/opt/clm` or covering it. Assign an operator-controlled FQDN and arrange a publicly trusted certificate for the Nginx HTTPS endpoint. Allow HTTPS access only from authorised networks or VPN clients. Outbound HTTPS is required for Let's Encrypt, Route 53 and Google Public DNS over HTTPS. Installation downloads packages and a checksum-verified acme.sh source archive. It does not issue certificates or contact AWS.
 
-Prepare a private directory with the deployment's `clm.yaml`, `route53.yaml` and `aws/credentials`. Keep AWS credentials at mode `0600`. If needed, include an AWS `aws/config` file.
-
-To let the installer activate HTTPS, include a `nginx.conf` in the same directory. Start from the [Nginx site configuration](../packaging/nginx/clm.conf) and set the server name, existing TLS certificate and key paths, and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply the corresponding firewall rules. Use a trusted independent TLS certificate to bootstrap the endpoint.
+Run the installer as root from the reviewed checkout.
 
 ```sh
-sudo ./scripts/install-server.sh --config-dir /path/to/private/clm-config
+sudo ./scripts/install-server.sh
 ```
 
-The installer installs the active files under `/opt/clm/config/`. It preserves configured files on repeated runs and fills the untouched defaults left by earlier releases. With `nginx.conf` supplied, it installs a new site at `/etc/nginx/sites-available/clm`, enables it and validates Nginx before reloading. An existing site is preserved. For upgrades of a configured host, run `sudo ./scripts/install-server.sh` without arguments.
+The installer places the working configuration in `/opt/clm/config/`. Edit `clm.yaml` for the ACME account email, `route53.yaml` for accounts and aliases, and `aws/credentials` for the matching AWS profiles. The Route 53 file includes the mapping layout in comments. Re-running the installer preserves your files.
+
+Edit `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
+
+Load and enable the installed CLM units when the host configuration is ready.
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now clmd.socket clm-renew.timer
+```
 
 The socket at `/opt/clm/run/clmd.sock` is accessible to the standard Debian Nginx group `www-data`. There is no application TCP listener.
 

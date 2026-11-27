@@ -194,46 +194,47 @@ def test_nginx_configuration_with_debian_binary(tmp_path, pki):
     subprocess.run([nginx, "-t", "-p", str(tmp_path), "-c", str(config)], check=True)
 
 
-def test_live_server_configuration_fills_defaults_and_preserves_operator_files(tmp_path):
-    prepared = tmp_path / "prepared"
-    (prepared / "aws").mkdir(parents=True)
-    expected = {
-        "clm.yaml": "account_email: administrator@example.net\n",
-        "route53.yaml": (
-            "accounts: {primary: {credentials_profile: primary}}\n"
-            "challenge_aliases: {acme.example.net: {account: primary, hosted_zone_id: Z1}}\n"
-        ),
-        "aws/credentials": ("[primary]\naws_access_key_id = MOCK\naws_secret_access_key = MOCK\n"),
-        "aws/config": "[default]\nregion = us-east-1\n",
-    }
-    for name, value in expected.items():
-        (prepared / name).write_text(value)
-
+@pytest.mark.parametrize("role", ["server", "client"])
+def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, role):
+    config = tmp_path / "config"
+    config.mkdir()
+    site = tmp_path / "sites-available/clm"
+    site.parent.mkdir()
     command = [
         "bash",
-        "-euc",
-        'source "$1"; server_configuration "$2" "$3" "$4"',
+        "-eu",
+        "-c",
+        'source "$1"; "install_${2}_configuration" "$3" "$4" "$5"',
         "test",
-        str(ROOT / "scripts/server-configuration.sh"),
-        str(prepared),
+        str(ROOT / "scripts/install-configuration.sh"),
+        role,
+        str(ROOT),
+        str(config),
+        str(site),
     ]
-    default_email = ROOT / "examples/server/clm.yaml"
-    for layout in ("fresh", "existing"):
-        destination = tmp_path / layout
-        (destination / "aws").mkdir(parents=True)
-        if layout == "existing":
-            (destination / "clm.yaml").write_bytes(default_email.read_bytes())
-            (destination / "route53.yaml").write_text("accounts: {}\nchallenge_aliases: {}\n")
-            (destination / "aws/credentials").touch()
+    subprocess.run(command, check=True)
+    if role == "server":
+        expected = {
+            config / "clm.yaml": 0o600,
+            config / "route53.yaml": 0o600,
+            config / "aws/credentials": 0o600,
+            config / "aws/config": 0o600,
+            site: 0o644,
+        }
+        from clm_common.config import load_config
 
-        subprocess.run([*command, str(destination), str(default_email)], check=True)
-        for name, value in expected.items():
-            path = destination / name
-            assert path.read_text() == value
-            assert path.stat().st_mode & 0o777 == 0o600
-        assert not list(destination.rglob("*.example"))
+        assert load_config(config / "route53.yaml") == {"accounts": {}, "challenge_aliases": {}}
+        assert "#     hosted_zone_id:" in (config / "route53.yaml").read_text()
+        assert "aws_secret_access_key =" in (config / "aws/credentials").read_text()
+    else:
+        expected = {config / "client.yaml": 0o600, config / "services.d/nginx.yaml": 0o600}
+        assert not (config / "credentials").exists()
 
-        credentials = destination / "aws/credentials"
-        credentials.write_text("# Updated by the operator\n")
-        subprocess.run([*command, str(destination), str(default_email)], check=True)
-        assert credentials.read_text() == "# Updated by the operator\n"
+    assert not list(tmp_path.rglob("*.example"))
+    for path, mode in expected.items():
+        assert path.is_file()
+        assert path.stat().st_mode & 0o777 == mode
+        path.write_text("operator configuration\n")
+    subprocess.run(command, check=True)
+    for path in expected:
+        assert path.read_text() == "operator configuration\n"

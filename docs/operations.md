@@ -54,7 +54,7 @@ An older server backup can leave clients ahead of the restored generation counte
 
 ## Upgrade and remove
 
-Before an upgrade, take a consistent backup and record the installed release and database schema with the date. Run the appropriate installer from the new reviewed checkout. The installer builds a versioned virtual environment, runs the schema migrator and switches the application link. It preserves existing configuration, credentials, certificate state and assignments. The prior code release is retained across a successful change. Re-run local checks after upgrading.
+Before an upgrade, take a consistent backup and record the installed release and database schema with the date. Run the appropriate installer from the new reviewed checkout. The installer builds a versioned virtual environment, runs the schema migrator and switches the application link. It preserves existing configuration, credentials, certificate state and assignments. The prior code release is retained across a successful change. After upgrading, run `systemctl daemon-reload` and restart the server API service if it is running so it loads the new release. Re-run local checks after upgrading.
 
 If a code rollback is necessary, stop the CLM services and timers. Reinstall the previous reviewed checkout to restore matching system units and engine. If the database schema changed or the two components are incompatible, restore the pre-upgrade backup as a consistent set before restarting. Never downgrade the running database manually. The current schema is version 1 and unknown versions are refused.
 
