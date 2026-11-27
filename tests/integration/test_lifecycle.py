@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from clm_client.application import Client
+from clm_client_debian.application import Client
 from clm_server.certificate import MAX_FILE, parse_manifest
 from clm_server.identity import storage_id
 from clm_server.locking import publication_lock
@@ -380,7 +380,7 @@ def test_listener_accepts_inherited_unix_socket(server):
 
 
 def test_client_rejects_bundle_checksum_mismatch(server, installed):
-    from clm_client.certificate import unpack_bundle
+    from clm_client_debian.certificate import unpack_bundle
     from clm_server.certificate import make_bundle
 
     admin, _, _ = server
@@ -446,7 +446,7 @@ def test_server_cli_status_and_client_listing_keep_json_optional(server, caplog)
 def test_client_cli_status_supports_readable_and_json_output(installed, capsys):
     import json
 
-    from clm_client.cli import arguments, dispatch
+    from clm_client_debian.cli import arguments, dispatch
 
     client, _, _ = installed
     parser = arguments()

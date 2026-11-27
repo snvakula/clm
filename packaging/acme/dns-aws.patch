@@ -5,7 +5,7 @@
 +# CLM delegates XML validation and conditional record updates to its local helper.
 +# A private per-account journal records the challenge before its first DNS write.
 +_clm_records() {
-+  "$CLM_PYTHON" -m clm_server.dns_records "$1"
++  "$CLM_PYTHON" -m "${CLM_DNS_MODULE:-clm_server.dns_records}" "$1"
 +}
 @@ -22 +26,14 @@
 -#Usage: dns_myapi_add   _acme-challenge.www.domain.com   "XKrxpRBosdIKFzxW_CT3KLZNf6q0HG9i01zxXp5CPBs"
@@ -228,7 +228,7 @@
 -  _use_metadata "169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"
 +# Send signed Route 53 requests without placing credentials or values in argv.
 +aws_rest() {
-+  response="$(printf '%s' "$4" | "$CLM_PYTHON" -m clm_server.dns_records request "$1" "$2" "$3")"
++  response="$(printf '%s' "$4" | "$CLM_PYTHON" -m "${CLM_DNS_MODULE:-clm_server.dns_records}" request "$1" "$2" "$3")"
 @@ -210,172 +78,0 @@
 -
 -_use_instance_role() {
