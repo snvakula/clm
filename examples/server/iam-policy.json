@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["route53:GetHostedZone", "route53:ListResourceRecordSets"],
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/ZXXXXXXXXXXXXX",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["_acme-challenge.acme.example.com"],
+          "route53:ChangeResourceRecordSetsRecordTypes": ["TXT"],
+          "route53:ChangeResourceRecordSetsActions": ["CREATE", "DELETE"]
+        }
+      }
+    }
+  ]
+}

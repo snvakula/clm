@@ -35,8 +35,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def public_cnames(name: str) -> list[str]:
-    url = "https://dns.google/resolve?" + urllib.parse.urlencode({"name": name, "type": "CNAME"})
+def _public_records(name: str, kind: str, number: int) -> list[str]:
+    url = "https://dns.google/resolve?" + urllib.parse.urlencode({"name": name, "type": kind})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
         with opener.open(url, timeout=10) as response:
@@ -47,8 +47,16 @@ def public_cnames(name: str) -> list[str]:
         raise ValueError(f"Public DNS lookup failed for {name}")
     return [
         dns_name(item["data"]) for item in payload.get("Answer", [])
-        if item["type"] == 5 and dns_name(item["name"]) == name
+        if item["type"] == number and dns_name(item["name"]) == name
     ]
+
+
+def public_cnames(name: str) -> list[str]:
+    return _public_records(name, "CNAME", 5)
+
+
+def public_nameservers(name: str) -> list[str]:
+    return _public_records(name, "NS", 2)
 
 
 @dataclass(frozen=True)

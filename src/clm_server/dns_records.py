@@ -12,12 +12,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from clm_common.certificate import hashlib
-import hmac
-import json_bytes
+from clm_common.certificate import json_bytes
 from clm_common.filesystem import read_regular, sync_directory, write_atomic
 
-from .route53 import ZONE, NoRedirect, dns_name
+from .route53 import ZONE, NoRedirect, dns_name, public_nameservers
 
 NS = "https://route53.amazonaws.com/doc/2013-04-01/"
 ET.register_namespace("", NS)
@@ -27,7 +25,7 @@ def tag(name: str) -> str:
     return f"{{{NS}}}{name}"
 
 
-def verify_zone(xml: bytes, zone: str, record: str) -> None:
+def verify_zone(xml: bytes, zone: str, record: str, *, delegation: bool) -> None:
     hosted = ET.fromstring(xml).find(tag("HostedZone"))
     if hosted is None or hosted.findtext(tag("Id")) != f"/hostedzone/{zone}":
         raise ValueError("Route 53 returned an unexpected zone")
@@ -37,6 +35,21 @@ def verify_zone(xml: bytes, zone: str, record: str) -> None:
         or not (record == name or record.endswith("." + name))
     ):
         raise ValueError("Configured hosted zone is not public or does not contain the endpoint")
+
+    if delegation:
+        response = ET.fromstring(xml)
+        nameservers = {
+            dns_name(element.text or "") for element in response.findall(
+                f"{tag('DelegationSet')}/{tag('NameServers')}/{tag('NameServer')}",
+            )
+        }
+        if not nameservers or nameservers != set(public_nameservers(name)):
+            raise ValueError("Configured hosted zone is not the publicly delegated zone")
+        origin = record
+        while origin != name:
+            if public_nameservers(origin):
+                raise ValueError("Challenge endpoint is in a more specific delegated zone")
+            origin = origin.split(".", 1)[1]
 
 
 def change(xml: bytes, record: str, value: str, *, remove: bool) -> bytes:
@@ -179,8 +192,8 @@ def main() -> int:
         xml = sys.stdin.buffer.read(512 * 1024 + 1)
         if len(xml) > 512 * 1024 or b"<!DOCTYPE" in xml.upper():
             raise ValueError("Invalid Route 53 XML")
-        if action == "zone":
-            verify_zone(xml, zone, record)
+        if action in ("zone", "cleanup-zone"):
+            verify_zone(xml, zone, record, delegation=action == "zone")
             return 0
         value = os.environ["CLM_TXT_VALUE"]
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):

@@ -18,7 +18,7 @@
 +  [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] || return 1
 +  _domain_id="/hostedzone/$CLM_HOSTED_ZONE"
 +  aws_rest GET "2013-04-01$_domain_id" || return 1
-+  printf '%s' "$response" | _clm_records zone
++  printf '%s' "$response" | _clm_records "$2"
 +}
 +
 +_clm_read() {
@@ -79,7 +79,7 @@
 -  if [ "$_resource_record" ] && _contains "$response" "$txtvalue"; then
 -    _info "The TXT record already exists. Skipping."
 -    _sleep 1
-+  _clm_zone "$1" && _clm_read "$1" || return 1
++  _clm_zone "$1" zone && _clm_read "$1" || return 1
 +  _clm_change="$(printf '%s' "$response" | CLM_TXT_VALUE="$2" _clm_records add)" || return 1
 +  if aws_rest POST "2013-04-01$_domain_id/rrset/" "" "$_clm_change" &&
 +    _contains "$response" "ChangeResourceRecordSetsResponse"; then
@@ -124,7 +124,7 @@
 -    _use_container_role || _use_instance_role
 +  _clm_pending="$(_clm_records pending)" || return 1
 +  [ "$_clm_pending" = "$2" ] && [ -n "$2" ] || return 0
-+  _clm_zone "$1" && _clm_read "$1" || return 1
++  _clm_zone "$1" cleanup-zone && _clm_read "$1" || return 1
 +  _clm_change="$(printf '%s' "$response" | CLM_TXT_VALUE="$2" _clm_records remove)" || return 1
 +  if [ -n "$_clm_change" ]; then
 +    aws_rest POST "2013-04-01$_domain_id/rrset/" "" "$_clm_change" &&

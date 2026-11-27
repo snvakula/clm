@@ -34,7 +34,7 @@ class Acme:
             "config", "certificates", "logs", "work", "exports",
         ))):
             path.mkdir(mode=0o700, exist_ok=True)
-            if path.is_symlink() or path.stat().st_mode & 0o077:
+            if path.is_symlink() or path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077:
                 raise ValueError("Unsafe ACME instance permissions")
         return instance
 

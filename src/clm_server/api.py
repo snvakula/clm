@@ -177,8 +177,7 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path("/opt/clm"))
     parser.add_argument("--fd", type=int, default=3, help="Inherited Unix listening socket")
     args = parser.parse_args()
-    # SQLite copies the database mode when it creates its shared WAL files.
-    os.umask(0o007)
+    os.umask(0o077)
     root = args.root.resolve()
     configure_logging(root / "logs", "clmd").info("Starting certificate distribution")
     uvicorn.run(create_app(root), fd=args.fd, proxy_headers=False, access_log=False)

@@ -1,0 +1,19 @@
+/opt/clm/logs/clm.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    create 0600 root clm-api
+}
+/opt/clm/logs/clmd.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    create 0600 clm-api clm-api
+    postrotate
+        systemctl try-restart clmd.service >/dev/null 2>&1
+    endscript
+}

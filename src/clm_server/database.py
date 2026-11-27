@@ -16,6 +16,7 @@ CREATE TABLE certificates (
     algorithm TEXT NOT NULL,
     account TEXT,
     alias TEXT,
+    zone TEXT,
     generation INTEGER NOT NULL DEFAULT 0,
     previous INTEGER,
     serial TEXT,
@@ -58,6 +59,7 @@ CREATE TABLE publication (
     version INTEGER NOT NULL,
     account TEXT,
     alias TEXT,
+    zone TEXT,
     renewed INTEGER NOT NULL
 );
 CREATE TABLE bundle_leases (

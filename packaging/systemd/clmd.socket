@@ -1,0 +1,12 @@
+[Unit]
+Description=CLM distribution Unix socket
+
+[Socket]
+ListenStream=/opt/clm/run/clmd.sock
+SocketUser=clm-api
+SocketGroup=www-data
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -47,11 +47,11 @@ class Repository:
             connection.execute(
                 """UPDATE certificates SET previous=CASE WHEN status='active' THEN generation END,
                    generation=?, serial=?, not_before=?, not_after=?, algorithm=?, account=?,
-                   alias=?, status='active', last_error=NULL,
+                   alias=?, zone=?, status='active', last_error=NULL,
                    last_renewal=CASE WHEN ? THEN ? ELSE last_renewal END WHERE identifier=?""",
                 (version, manifest["serial"], manifest["not_before"], manifest["not_after"],
                  KEYS[manifest["key_algorithm"], manifest["key_size"]], entry["account"],
-                 entry["alias"], entry["renewed"], now(), identifier),
+                 entry["alias"], entry["zone"], entry["renewed"], now(), identifier),
             )
             connection.execute("DELETE FROM publication WHERE identifier=?", (identifier,))
             audit(connection, "publish", identifier=identifier, generation=version)
@@ -94,7 +94,7 @@ class Repository:
 
     def publish(
         self, row: dict, material: dict[str, bytes], *,
-        account: str | None = None, alias: str | None = None, renewed: bool = False,
+        account: str | None = None, alias: str | None = None, zone: str | None = None, renewed: bool = False,
     ) -> int:
         """Validate before publication. Call with the exclusive publication lock held."""
         identifier = row["identifier"]
@@ -111,11 +111,11 @@ class Repository:
             )),
         })
         self.files.stage(identifier, version, {**material, "manifest.json": json_bytes(manifest)})
-        entry = dict(identifier=identifier, version=version, account=account, alias=alias,
+        entry = dict(identifier=identifier, version=version, account=account, alias=alias, zone=zone,
                      renewed=int(renewed))
         with self.db.connect(write=True) as connection:
             connection.execute(
-                "INSERT INTO publication VALUES (:identifier, :version, :account, :alias, :renewed)",
+                "INSERT INTO publication VALUES (:identifier, :version, :account, :alias, :zone, :renewed)",
                 entry,
             )
         self.files.activate(identifier, version)

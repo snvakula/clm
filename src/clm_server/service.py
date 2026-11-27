@@ -3,6 +3,9 @@
 import hashlib
 import re
 import secrets
+
+from cryptography import x509
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
@@ -109,7 +112,9 @@ class Administration:
             )
         engine = self.engine()
         target = engine.route.discover(identifier)
-        migrating = (row["account"], row["alias"]) != (target.account, target.alias)
+        migrating = (row["account"], row["alias"], row["zone"]) != (
+            target.account, target.alias, target.zone,
+        )
         issue = migrating or not row["account"] or key != row["algorithm"]
         if row["status"] in ("revoked", "deleted", "revoking"):
             issue = True
@@ -144,11 +149,19 @@ class Administration:
             if previous["files"] == candidate["files"]:
                 if operation == "rotate-key" or migrating or not usable:
                     raise ValueError("ACME did not produce new certificate material")
-            elif previous["files"]["privkey.pem"] == candidate["files"]["privkey.pem"]:
-                raise ValueError("ACME reused the previous private key")
+            else:
+                live = self.repo.files.directory(identifier, row["generation"])
+                old_leaf = x509.load_pem_x509_certificate(read_regular(live / "cert.pem", 65536))
+                new_leaf = x509.load_pem_x509_certificate(material["cert.pem"])
+                if old_leaf.public_key().public_bytes(
+                    Encoding.DER, PublicFormat.SubjectPublicKeyInfo,
+                ) == new_leaf.public_key().public_bytes(
+                    Encoding.DER, PublicFormat.SubjectPublicKeyInfo,
+                ):
+                    raise ValueError("ACME reused the previous private key")
         with publication_lock(self.repo.lock, write=True):
             version = self.repo.publish(
-                row, material, account=target.account, alias=target.alias,
+                row, material, account=target.account, alias=target.alias, zone=target.zone,
                 renewed=bool(row["generation"]),
             )
         marker.unlink(missing_ok=True)
@@ -189,14 +202,15 @@ class Administration:
             return version
 
     def revoke(self, identifier: str) -> None:
-        with self.operation_lock(), publication_lock(self.repo.lock, write=True):
-            self.repo.reconcile()
-            row = self.repo.certificate(identifier)
+        with self.operation_lock():
+            with publication_lock(self.repo.lock, write=True):
+                self.repo.reconcile()
+                row = self.repo.certificate(identifier)
             if not row or not row["account"] or row["status"] not in ("active", "revoking"):
                 raise ValueError("Certificate has no revocable ACME-managed generation")
             engine = self.engine()
             target = engine.route.aliases.get(row["alias"])
-            if target is None or target.account != row["account"]:
+            if target is None or (target.account, target.zone) != (row["account"], row["zone"]):
                 raise ValueError("Restore the original account mapping before revocation")
             material = engine.export(target, identifier, row["algorithm"])
             _, manifest = self.repo.manifest(identifier, row["generation"])
