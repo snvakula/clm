@@ -12,6 +12,15 @@ sudo clm-client available
 
 The installer enables the daily systemd update timer. The CLM administrator must provide a token for this client over a protected channel. The interactive prompt does not echo it. Automated provisioning can use `--credentials-file /path/to/protected/token` or `--token-stdin`. A credentials file must be readable only by its owner. The credential is verified through HTTPS before CLM saves it under `/opt/clm-client/config/credentials`. Rerun `init` after an administrator rotates the token.
 
+For installation and enrolment in one command, use a protected file containing only the token.
+
+```sh
+sudo ./scripts/install-client.sh --server https://clm.example.com \
+    --credentials-file /path/to/protected/token
+```
+
+The active settings are at `/opt/clm-client/config/client.yaml`. The installed Nginx service profile is at `/opt/clm-client/config/services.d/nginx.yaml`. On enrolment, the client writes `/opt/clm-client/config/credentials` after verifying the token. A repeated installation preserves an existing registration.
+
 ## Install and use a certificate
 
 ```sh

@@ -192,3 +192,48 @@ def test_nginx_configuration_with_debian_binary(tmp_path, pki):
         text = config.read_text().replace("http {", "http { " + block, 1)
         config.write_text(text)
     subprocess.run([nginx, "-t", "-p", str(tmp_path), "-c", str(config)], check=True)
+
+
+def test_live_server_configuration_fills_defaults_and_preserves_operator_files(tmp_path):
+    prepared = tmp_path / "prepared"
+    (prepared / "aws").mkdir(parents=True)
+    expected = {
+        "clm.yaml": "account_email: administrator@example.net\n",
+        "route53.yaml": (
+            "accounts: {primary: {credentials_profile: primary}}\n"
+            "challenge_aliases: {acme.example.net: {account: primary, hosted_zone_id: Z1}}\n"
+        ),
+        "aws/credentials": ("[primary]\naws_access_key_id = MOCK\naws_secret_access_key = MOCK\n"),
+        "aws/config": "[default]\nregion = us-east-1\n",
+    }
+    for name, value in expected.items():
+        (prepared / name).write_text(value)
+
+    command = [
+        "bash",
+        "-euc",
+        'source "$1"; server_configuration "$2" "$3" "$4"',
+        "test",
+        str(ROOT / "scripts/server-configuration.sh"),
+        str(prepared),
+    ]
+    default_email = ROOT / "examples/server/clm.yaml"
+    for layout in ("fresh", "existing"):
+        destination = tmp_path / layout
+        (destination / "aws").mkdir(parents=True)
+        if layout == "existing":
+            (destination / "clm.yaml").write_bytes(default_email.read_bytes())
+            (destination / "route53.yaml").write_text("accounts: {}\nchallenge_aliases: {}\n")
+            (destination / "aws/credentials").touch()
+
+        subprocess.run([*command, str(destination), str(default_email)], check=True)
+        for name, value in expected.items():
+            path = destination / name
+            assert path.read_text() == value
+            assert path.stat().st_mode & 0o777 == 0o600
+        assert not list(destination.rglob("*.example"))
+
+        credentials = destination / "aws/credentials"
+        credentials.write_text("# Updated by the operator\n")
+        subprocess.run([*command, str(destination), str(default_email)], check=True)
+        assert credentials.read_text() == "# Updated by the operator\n"

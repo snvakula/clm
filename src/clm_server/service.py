@@ -31,6 +31,18 @@ def token_hash(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 
 
+def account_email(path: Path) -> str:
+    settings = load_config(path)
+    email = settings.get("account_email")
+    if (
+        set(settings) != {"account_email"}
+        or not isinstance(email, str)
+        or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
+    ):
+        raise ValueError("Configure a valid ACME account email in clm.yaml")
+    return email
+
+
 class Administration:
     def __init__(self, root: Path) -> None:
         self.root = root
@@ -49,14 +61,7 @@ class Administration:
                 self.operation_descriptor = None
 
     def engine(self) -> Acme:
-        settings = load_config(self.root / "config/clm.yaml")
-        email = settings.get("account_email")
-        if (
-            set(settings) != {"account_email"}
-            or not isinstance(email, str)
-            or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email)
-        ):
-            raise ValueError("Configure a valid ACME account email in clm.yaml")
+        email = account_email(self.root / "config/clm.yaml")
         engine = Acme(self.root, Route53(self.root / "config"), email)
         engine.lock_descriptor = self.operation_descriptor
         if not engine.ready():
