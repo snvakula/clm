@@ -8,13 +8,14 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+INSTALLERS = {"server": "install-server.sh", "client": "install-client-debian.sh"}
 REVISION = "5567d7fe7298fd37aca53194885ba444c6678669"
 TARBALL_SHA256 = "22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc"
 
 
 def test_scripts_and_timer_parameters():
     scripts = ROOT / "scripts"
-    assert {path.name for path in scripts.iterdir()} == {"install-server.sh", "install-client.sh"}
+    assert {path.name for path in scripts.iterdir()} == set(INSTALLERS.values())
     for path in scripts.glob("*.sh"):
         subprocess.run(["bash", "-n", str(path)], check=True)
     units = ROOT / "packaging/systemd"
@@ -34,7 +35,7 @@ def test_scripts_and_timer_parameters():
                 stdout=subprocess.DEVNULL,
             )
     api = (units / "clmd.service").read_text()
-    assert "User=clm-api" in api
+    assert {"User=clm", "Group=clm"} <= set(api.splitlines())
     assert "InaccessiblePaths=/opt/clm/acme /opt/clm/config" in api
     assert "ReadOnlyPaths=/opt/clm/data/certificates" in api
     assert "RestrictAddressFamilies=AF_UNIX" in api
@@ -47,7 +48,7 @@ def stage_files(directory, role):
             "-euc",
             f'source "$1"; stage_{role}_files "$2" "$3" "$4"',
             "test",
-            str(ROOT / f"scripts/install-{role}.sh"),
+            str(ROOT / f"scripts/{INSTALLERS[role]}"),
             str(ROOT),
             str(directory),
             sys.executable,
@@ -228,7 +229,7 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
         "-c",
         'source "$1"; "install_${2}_configuration" "$3" "$4" "$5"',
         "test",
-        str(ROOT / f"scripts/install-{role}.sh"),
+        str(ROOT / f"scripts/{INSTALLERS[role]}"),
         role,
         str(ROOT),
         str(config),
@@ -249,7 +250,11 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
         assert not (config / "aws/config").exists()
         assert "aws_secret_access_key =" in (config / "aws/credentials").read_text()
     else:
-        expected = {config / "client.yaml": 0o600, config / "services.d/nginx.yaml": 0o600}
+        expected = {
+            config / "client.yaml": 0o600,
+            config / "hooks.d/restart-web-servers": 0o700,
+        }
+        assert not (config / "services.d").exists()
         assert not (config / "credentials").exists()
 
     assert not list(tmp_path.rglob("*.example"))
@@ -377,7 +382,7 @@ def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path)
             "-euc",
             'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout "$2"',
             "test",
-            str(ROOT / "scripts/install-client.sh"),
+            str(ROOT / "scripts/install-client-debian.sh"),
             str(root),
             str(workspace),
         ],
@@ -387,3 +392,85 @@ def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path)
     assert not (root / "app/clm_client").exists()
     assert credentials.read_text() == "existing client registration"
     assert state.read_text() == "existing client certificate state"
+
+
+def test_restart_web_servers_checks_activity_and_restarts_only_running_units(tmp_path):
+    systemctl = tmp_path / "systemctl"
+    systemctl.write_text(
+        '#!/bin/sh\nprintf "%s\n" "$*" >> "$SYSTEMCTL_LOG"\n'
+        'case "$*" in\n'
+        '  "is-active --quiet apache2.service") exit 0 ;;\n'
+        '  "is-active --quiet nginx.service") exit 3 ;;\n'
+        '  "show --property=SubState --value apache2.service") echo running ;;\n'
+        '  "try-restart apache2.service") exit 0 ;;\n'
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    systemctl.chmod(0o700)
+    log = tmp_path / "systemctl.log"
+    subprocess.run(
+        ["/bin/sh", str(ROOT / "src/clm_client_debian/restart-web-servers")],
+        env={"PATH": str(tmp_path), "SYSTEMCTL_LOG": str(log)},
+        check=True,
+    )
+    assert log.read_text().splitlines() == [
+        "is-active --quiet apache2.service",
+        "show --property=SubState --value apache2.service",
+        "try-restart apache2.service",
+        "is-active --quiet nginx.service",
+    ]
+
+
+@pytest.mark.parametrize("role", ["server", "client"])
+def test_installer_removes_only_its_old_cli_links(tmp_path, role):
+    old = tmp_path / "command"
+    previous = "/opt/clm/bin/clm" if role == "server" else "/opt/clm-client/bin/clm-client"
+    command = [
+        "bash",
+        "-euc",
+        'source "$1"; remove_legacy_link "$2" "$3"',
+        "test",
+        str(ROOT / "scripts" / INSTALLERS[role]),
+        str(old),
+        previous,
+    ]
+    old.symlink_to(previous)
+    subprocess.run(command, check=True)
+    assert not old.is_symlink()
+    old.symlink_to("/usr/bin/operator-command")
+    subprocess.run(command, check=True)
+    assert old.is_symlink()
+
+
+def test_server_identity_migrates_to_clm_without_recreating_accounts(tmp_path):
+    subprocess.run(
+        [
+            "bash",
+            "-euc",
+            """
+source "$1"
+user=clm-api
+group=clm-api
+id() {
+    case "$*" in
+        "$user") return 0 ;;
+        "-u $user") echo 987 ;;
+        "-gn $user") echo "$group" ;;
+        *) return 1 ;;
+    esac
+}
+getent() { [[ $1 = group && $2 = "$group" ]]; }
+useradd() { return 1; }
+groupadd() { return 1; }
+usermod() { [[ "$*" = "--login clm clm-api" ]] && user=clm; }
+groupmod() { [[ "$*" = "--new-name clm clm-api" ]] && group=clm; }
+configure_server_identity "$2"
+configure_server_identity "$2"
+[[ $user = clm && $group = clm ]]
+""",
+            "test",
+            str(ROOT / "scripts/install-server.sh"),
+            str(tmp_path),
+        ],
+        check=True,
+    )

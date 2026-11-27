@@ -8,7 +8,7 @@ import urllib.request
 from typing import Any
 
 from .certificate import MAX_BUNDLE, MAX_FILE, parse_manifest
-from .identity import storage_id
+from .identity import normalise_identifier, storage_id
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -83,19 +83,17 @@ class Remote:
             raise ValueError("CLM server returned an unexpected JSON object")
         return data
 
-    def client(self) -> str:
-        name = self.object("/client", 4096).get("name")
-        if not isinstance(name, str) or not name:
-            raise ValueError("CLM server returned an invalid client identity")
-        return name
-
-    def available(self) -> list[dict]:
+    def available(self) -> list[str]:
         certificates = self.object("/certificates").get("certificates")
-        if not isinstance(certificates, list) or any(
-            not isinstance(row, dict) for row in certificates
-        ):
+        if not isinstance(certificates, list):
             raise ValueError("CLM server returned an invalid certificate list")
-        return certificates
+        identifiers = set()
+        for row in certificates:
+            identifier = row.get("certificate_id") if isinstance(row, dict) else None
+            if not isinstance(identifier, str) or normalise_identifier(identifier) != identifier:
+                raise ValueError("CLM server returned an invalid certificate identifier")
+            identifiers.add(identifier)
+        return sorted(identifiers)
 
     def manifest(self, identifier: str) -> dict:
         return parse_manifest(

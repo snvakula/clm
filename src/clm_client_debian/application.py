@@ -1,4 +1,4 @@
-"""Client configuration, certificate installation and recoverable service activation."""
+"""Synchronise certificates from CLM and run local update hooks."""
 
 import json
 import logging
@@ -21,10 +21,9 @@ from .certificate import (
 from .config import load_config
 from .filesystem import read_regular, write_atomic
 from .generations import Generations
+from .hooks import hook_paths, run_hook
 from .logging import progress
-
-from .profiles import Profiles
-from .remote import Remote, endpoint
+from .remote import Remote
 
 
 class Client:
@@ -33,9 +32,9 @@ class Client:
         self.trust = trust
         self.logger = logger
         self.files = Generations(root / "certificates")
-        self.profiles = Profiles(root, logger)
         self.state_file = root / "data/state.json"
-        self.credentials = root / "config/credentials"
+        self.config_file = root / "config/client.yaml"
+        self.hooks = root / "config/hooks.d"
 
     def state(self) -> dict:
         try:
@@ -50,61 +49,39 @@ class Client:
     def save(self, state: dict) -> None:
         write_atomic(self.state_file, json_bytes(state))
 
-    def _remote(self, server: str, token: str) -> Remote:
-        settings = load_config(self.root / "config/client.yaml")
-        timeout = settings.get("request_timeout", 20)
-        if (
-            set(settings) - {"request_timeout"}
-            or type(timeout) is not int
-            or not 1 <= timeout <= 120
-        ):
-            raise ValueError("Invalid client request timeout")
-        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
-            raise ValueError("Invalid client access token")
-        return Remote(server, token, timeout=timeout)
-
     def remote(self) -> Remote:
-        try:
-            value = json.loads(read_regular(self.credentials, 4096, private=True))
-        except (UnicodeError, ValueError):
-            raise ValueError("Invalid client credentials") from None
-        if (
-            not isinstance(value, dict)
-            or set(value) != {"server", "token"}
-            or not all(isinstance(item, str) for item in value.values())
-        ):
-            raise ValueError("Invalid client credentials")
-        return self._remote(value["server"], value["token"])
-
-    def initialise(self, server: str, token: str) -> str:
-        url = endpoint(server)
-        progress(self.logger, "Verifying the client token with the CLM server")
-        name = self._remote(url, token).client()
-        if (
-            self.credentials.exists()
-            and self.state()["certificates"]
-            and url != self.remote().server
-        ):
-            raise ValueError("Remove installed certificates before changing the CLM server")
-        write_atomic(self.credentials, json_bytes({"server": url, "token": token}))
-        return name
+        settings = load_config(self.config_file)
+        server, token = settings.get("server"), settings.get("token")
+        timeout = settings.get("request_timeout", 20)
+        if set(settings) - {"server", "token", "request_timeout"}:
+            raise ValueError("Unexpected setting in client.yaml")
+        if not isinstance(server, str) or not server:
+            raise ValueError("Set the CLM server URL in client.yaml")
+        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+            raise ValueError("Set a valid client token in client.yaml")
+        if type(timeout) is not int or not 1 <= timeout <= 120:
+            raise ValueError("Invalid client request timeout")
+        return Remote(server, token, timeout=timeout)
 
     def _rollback(self, state: dict) -> None:
         pending = state["pending"]
         progress(self.logger, "Restoring the previous certificate state")
-        affected = set()
-        # Reload conservatively even when a previous recovery already restored the links.
         if pending["switching"]:
             for identifier, change in pending["changes"].items():
                 if self.files.current(identifier) != change["old"]:
                     self.files.activate(identifier, change["old"])
-                affected.update(change["services"])
-            for name in sorted(affected):
-                self.profiles.execute(self.profiles.load(name), "check")
-            for name in sorted(affected):
-                profile = self.profiles.load(name)
-                self.profiles.execute(profile, "reload")
-                self.profiles.execute(profile, "verify")
+        attempted = pending.get("attempted_hooks", [])
+        if attempted:
+            paths = {path.name: path for path in hook_paths(self.hooks)}
+            failures = []
+            for name in attempted:
+                if name in paths:
+                    try:
+                        run_hook(self.root, paths[name], "rollback", pending["updated"])
+                    except ValueError as error:
+                        failures.append(str(error))
+            if failures:
+                raise ValueError("; ".join(failures))
         for identifier in pending["changes"]:
             row = state["certificates"].get(identifier) or {}
             self.files.clean(identifier, {row.get("version"), row.get("previous")})
@@ -133,18 +110,6 @@ class Client:
             state.pop("removals")
             self.save(state)
 
-    def remove(self, state: dict, identifier: str, force: bool) -> None:
-        row = state["certificates"].get(identifier)
-        if row is None:
-            raise ValueError("Certificate is not installed")
-        if row["services"] and not force:
-            raise ValueError("Certificate is associated with local services; use --force")
-        state["certificates"].pop(identifier)
-        state["removals"] = [identifier]
-        self.save(state)
-        self.recover(state)
-        self.logger.info("Removed certificate %s", identifier)
-
     def inspect(self, state: dict, identifier: str) -> dict[str, Any]:
         row = state["certificates"].get(identifier)
         if row is None:
@@ -154,90 +119,69 @@ class Client:
         manifest = parse_manifest(read_regular(directory / "manifest.json", MAX_FILE), identifier)
         return {
             **manifest,
-            "services": row["services"],
             "certificate_path": str(live / "fullchain.pem"),
             "private_key_path": str(live / "privkey.pem"),
         }
 
-    def apply(
-        self,
-        state: dict,
-        identifiers: list[str],
-        *,
-        service_names: list[str] | None = None,
-    ) -> None:
-        if not identifiers:
-            return
-        pending = {"switching": False, "changes": {}}
+    def update(self, state: dict) -> tuple[int, int]:
+        self.recover(state)
+        pending = {"switching": False, "changes": {}, "updated": [], "attempted_hooks": []}
         registrations = dict(state["certificates"])
-        profiles = {}
         try:
             remote = self.remote()
+            progress(self.logger, "Fetching all assigned certificates from the CLM server")
+            identifiers = remote.available()
             for identifier in identifiers:
-                row = state["certificates"].get(identifier, {})
-                services = sorted(set(row.get("services", ())) | set(service_names or ()))
-                for name in services:
-                    if name not in profiles:
-                        profiles[name] = self.profiles.load(name)
-                progress(
-                    self.logger,
-                    "Checking the current generation of %s on the CLM server",
-                    identifier,
-                )
+                row = registrations.get(identifier)
+                progress(self.logger, "Checking the current generation of %s", identifier)
                 incoming = remote.manifest(identifier)
                 number = incoming["version"]
-                local_files = None
-                copied = False
+                material = None
                 if row:
-                    directory = self.files.directory(identifier, row["version"])
+                    installed = row["version"]
+                    if number < installed:
+                        raise ValueError(f"Server reported an older generation for {identifier}")
                     try:
-                        local_files = read_material(directory)
+                        local_files = read_material(self.files.directory(identifier, installed))
                         local = validate(
                             identifier,
-                            row["version"],
+                            installed,
                             local_files,
                             self.root / "run",
                             self.trust,
                         )
                     except (OSError, ValueError):
                         local = None
-                    if number < row["version"]:
-                        raise ValueError(f"Server reported an older generation for {identifier}")
                     if local == incoming:
                         progress(self.logger, "%s is already at generation %s", identifier, number)
-                        registrations[identifier] = {**row, "services": services}
                         continue
-                    if number == row["version"]:
+                    if number == installed:
                         raise ValueError(
                             f"Installed generation requires local recovery for {identifier}"
                         )
-                    copied = local is not None and {**local, "version": number} == incoming
-                if copied:
-                    archive = {**local_files, "manifest.json": json_bytes(incoming)}
-                else:
+                    if local is not None and {**local, "version": number} == incoming:
+                        material = local_files
+                if material is None:
                     progress(self.logger, "Downloading generation %s for %s", number, identifier)
                     archive = unpack_bundle(remote.bundle(identifier, number))
-                progress(self.logger, "Validating the certificate and key for %s", identifier)
-                bundled = parse_manifest(archive["manifest.json"], identifier)
-                material = {name: archive[name] for name in PEMS}
-                verified = validate(identifier, number, material, self.root / "run", self.trust)
-                if verified != bundled or bundled != incoming:
-                    raise ValueError(
-                        f"Certificate bundle does not match its manifest for {identifier}"
-                    )
-                pending["changes"][identifier] = {
-                    "old": row.get("version"),
-                    "new": number,
-                    "services": [] if copied else services,
-                }
+                    bundled = parse_manifest(archive["manifest.json"], identifier)
+                    material = {name: archive[name] for name in PEMS}
+                    progress(self.logger, "Validating the certificate and key for %s", identifier)
+                    verified = validate(identifier, number, material, self.root / "run", self.trust)
+                    if verified != bundled or bundled != incoming:
+                        raise ValueError(
+                            f"Certificate bundle does not match its manifest for {identifier}"
+                        )
+                    pending["updated"].append(identifier)
+                else:
+                    archive = {**material, "manifest.json": json_bytes(incoming)}
+                old = row["version"] if row else None
+                pending["changes"][identifier] = {"old": old, "new": number}
                 state["pending"] = pending
                 self.save(state)
                 self.files.stage(identifier, number, archive)
-                registrations[identifier] = {
-                    "version": number,
-                    "previous": row.get("version"),
-                    "services": services,
-                }
+                registrations[identifier] = {"version": number, "previous": old}
+
             if pending["changes"]:
                 pending["switching"] = True
                 self.save(state)
@@ -246,14 +190,12 @@ class Client:
                         self.logger, "Activating generation %s for %s", change["new"], identifier
                     )
                     self.files.activate(identifier, change["new"])
-                affected = sorted(
-                    {name for change in pending["changes"].values() for name in change["services"]}
-                )
-                for name in affected:
-                    self.profiles.execute(profiles[name], "check")
-                for name in affected:
-                    self.profiles.execute(profiles[name], "reload")
-                    self.profiles.execute(profiles[name], "verify")
+            if pending["updated"]:
+                for hook in hook_paths(self.hooks):
+                    progress(self.logger, "Running certificate hook %s", hook.name)
+                    pending["attempted_hooks"].append(hook.name)
+                    self.save(state)
+                    run_hook(self.root, hook, "updated", pending["updated"])
             completed = {
                 **state,
                 "pending": None,
@@ -263,20 +205,12 @@ class Client:
             }
             self.save(completed)
         except (OSError, ValueError) as exc:
-            # Read the durable record even when an fsync or write reported a late failure.
+            detail = str(exc) if type(exc) is ValueError else "Local certificate update I/O failed"
             durable = self.state()
             self.recover(durable)
-            detail = (
-                str(exc) if isinstance(exc, ValueError) else "Local certificate update I/O failed"
-            )
             durable["last_error"] = detail
             self.save(durable)
             raise ValueError(detail) from None
         state.update(completed)
         self.recover(state)
-        for identifier in pending["changes"]:
-            self.logger.info(
-                "Activated certificate %s generation %s",
-                identifier,
-                registrations[identifier]["version"],
-            )
+        return len(identifiers), len(pending["changes"])

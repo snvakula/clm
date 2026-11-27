@@ -4,7 +4,7 @@
     compress
     missingok
     notifempty
-    create 0600 root clm-api
+    create 0600 root clm
 }
 /opt/clm/logs/clmd.log {
     weekly
@@ -12,7 +12,7 @@
     compress
     missingok
     notifempty
-    create 0600 clm-api clm-api
+    create 0600 clm clm
     postrotate
         systemctl try-restart clmd.service >/dev/null 2>&1
     endscript

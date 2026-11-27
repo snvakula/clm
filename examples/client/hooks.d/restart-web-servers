@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec "${CLM_CLIENT_ROOT:-/opt/clm-client}/bin/restart-web-servers"

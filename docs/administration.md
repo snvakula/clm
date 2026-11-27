@@ -41,11 +41,11 @@ _acme-challenge.example.net.     CNAME _acme-challenge.acme.example.org.
 
 The target must terminate in the public hosted zone named in the configuration. CLM checks the public NS delegation against Route 53 and rejects an endpoint below a more specific zone. Existing simple TXT values and their TTL are preserved. Routing-policy TXT record sets are rejected. Route 53 applies the conditional deletion of the exact old record set and creation of the replacement in a single change batch. If another writer changes the record set between the read and the transaction, the change fails safely.
 
-Run `sudo clm check` after configuration. The check validates local configuration, credential permissions, the database and active repository contents. Issuance validates the live public DNS delegation and Route 53 zone. The pinned engine is installed without invoking the native installer or enabling native renewal.
+Run `sudo /opt/clm/bin/clm check` after configuration. The check validates local configuration, credential permissions, the database and active repository contents. Issuance validates the live public DNS delegation and Route 53 zone. The pinned engine is installed without invoking the native installer or enabling native renewal.
 
 ## Administrative CLI
 
-Run commands as root. Quote wildcard identifiers in the shell. Commands show progress on stderr during DNS lookup, issuance, validation and publication. Inspection commands display labelled records by default and keep JSON on stdout when requested. Successful operations return zero. Usage errors return two. A failed operation returns one.
+Run the administrative executable at `/opt/clm/bin/clm` as root. Quote wildcard identifiers in the shell. Commands show progress on stderr during DNS lookup, issuance, validation and publication. Inspection commands display labelled records by default and keep JSON on stdout when requested. Successful operations return zero. Usage errors return two. A failed operation returns one.
 
 | Command | Behaviour |
 |---|---|
@@ -70,11 +70,11 @@ Supported key algorithms are `ec-256` (default), `ec-384`, `rsa-2048`, `rsa-3072
 Prepare a root-only directory on encrypted storage containing `cert.pem`, `chain.pem`, `fullchain.pem` and `privkey.pem` in standard PEM format. Keep the private key mode `0600`. The leaf must have exactly the requested DNS SAN and chain to the system trust store.
 
 ```sh
-sudo clm cert import git.example.com /path/to/protected/migration
-sudo clm client grant git git.example.com
+sudo /opt/clm/bin/clm cert import git.example.com /path/to/protected/migration
+sudo /opt/clm/bin/clm client grant git git.example.com
 ```
 
-The imported generation is available through existing grants. To enrol it for automatic renewal, configure DNS and credentials, then explicitly run `sudo clm cert renew git.example.com` and check the account and generation using `clm cert show`. A newly issued, validated ACME generation establishes the account's renewal state. Remove the protected migration copies once the transition is verified.
+The imported generation is available through existing grants. To enrol it for automatic renewal, configure DNS and credentials, then explicitly run `sudo /opt/clm/bin/clm cert renew git.example.com` and check the account and generation using `clm cert show`. A newly issued, validated ACME generation establishes the account's renewal state. Remove the protected migration copies once the transition is verified.
 
 ## Distribution API
 

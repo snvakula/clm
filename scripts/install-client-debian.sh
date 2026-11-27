@@ -9,10 +9,10 @@ keep_configuration() {
 
 install_client_configuration() {
     local sources=$1 config=$2
-    install -d -m 0700 "$config/services.d"
+    install -d -m 0700 "$config/hooks.d"
     keep_configuration 0600 "$sources/examples/client/client.yaml" "$config/client.yaml"
-    keep_configuration 0600 "$sources/examples/client/services.d/nginx.yaml" \
-        "$config/services.d/nginx.yaml"
+    keep_configuration 0700 "$sources/examples/client/hooks.d/restart-web-servers" \
+        "$config/hooks.d/restart-web-servers"
 }
 
 stage_client_files() {
@@ -85,10 +85,11 @@ remove_legacy_layout() {
     done
 }
 
-switch_link() {
-    local link=$1 target=$2 temporary="${1}.new"
-    ln -sfn -- "$target" "$temporary"
-    mv -Tf -- "$temporary" "$link"
+remove_legacy_link() {
+    local link=$1 destination=$2
+    if [[ -L $link && $(readlink -- "$link") == "$destination" ]]; then
+        rm -- "$link"
+    fi
 }
 
 install_client() {
@@ -96,7 +97,7 @@ install_client() {
     umask 077
     local root=/opt/clm-client sources unit
     if (($#)); then
-        echo 'Run install-client.sh without arguments.' >&2
+        echo 'Run install-client-debian.sh without arguments.' >&2
         exit 2
     fi
     if [[ $EUID != 0 ]]; then
@@ -140,7 +141,9 @@ install_client() {
     install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm-client" "$root/bin/clm-client"
-    switch_link /usr/local/bin/clm-client "$root/bin/clm-client"
+    install -m 0755 -- "$sources/src/clm_client_debian/restart-web-servers" \
+        "$root/bin/restart-web-servers"
+    remove_legacy_link /usr/local/bin/clm-client "$root/bin/clm-client"
     remove_legacy_layout "$root"
     echo 'Installed CLM Debian client. Configuration directory /opt/clm-client/config.'
 }

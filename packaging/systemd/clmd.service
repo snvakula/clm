@@ -5,8 +5,8 @@ After=clmd.socket
 
 [Service]
 Type=simple
-User=clm-api
-Group=clm-api
+User=clm
+Group=clm
 ExecStart=/opt/clm/bin/clmd
 UMask=0077
 NoNewPrivileges=yes

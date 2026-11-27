@@ -1,55 +1,34 @@
-# Client guide
+# Debian client guide
 
-## Install and enrol
-
-On Debian 13, run the client installer from the reviewed checkout.
+On Debian 13, install the client and edit its configuration as root.
 
 ```sh
-sudo ./scripts/install-client.sh
-sudo clm-client init https://clm.example.com
-sudo clm-client available
+sudo ./scripts/install-client-debian.sh
+sudoedit /opt/clm-client/config/client.yaml
+```
+
+Set the HTTPS address of your CLM server and the token assigned to this client. Keep the file owned by root and at mode `0600`.
+
+```yaml
+server: https://clm.example.com
+token: 'replace-with-your-client-token'
+```
+
+When upgrading a registered client, transfer the server URL and token from the old `/opt/clm-client/config/credentials` into `client.yaml`. The same applies to a rotated token.
+
+```sh
+sudo /opt/clm-client/bin/clm-client update
+sudo /opt/clm-client/bin/clm-client status
 sudo systemctl daemon-reload
 sudo systemctl enable --now clm-client-update.timer
 ```
 
-The installer places the Debian client modules in `/opt/clm-client/app` and its Python virtual environment in `/opt/clm-client/venv`. Each enrolled client uses the token assigned to its own client name. It writes the active settings to `/opt/clm-client/config/client.yaml` and the Nginx profile to `/opt/clm-client/config/services.d/nginx.yaml`. The CLM administrator must provide a token for this client over a protected channel. The interactive prompt does not echo it. Automated provisioning can use `--credentials-file /path/to/protected/token` or `--token-stdin`. A credentials file must be readable only by its owner. The credential is verified through HTTPS before CLM saves it under `/opt/clm-client/config/credentials`. Rerun `init` after an administrator rotates the token.
+`update` fetches all the certificates currently assigned to the token. It validates the entire batch before changing the local generation links and skips downloads for unchanged generations. Existing files remain available if the server is unreachable or withdraws a grant. `status` shows installed certificates, expiry dates, full certificate and private key paths, and the last update result. Use `status --json` for monitoring.
 
-## Install and use a certificate
+The persistent timer checks daily between 04:00 and 07:00 UTC. Use `systemctl edit clm-client-update.timer` to adjust the schedule.
 
-```sh
-sudo clm-client install git.example.com --service nginx
-sudo clm-client show git.example.com
-```
+## Certificate update hooks
 
-Use the paths returned by the command. Configure Nginx yourself, then test and gracefully reload it.
+Place executable root-owned scripts in `/opt/clm-client/config/hooks.d/` and give them mode `0700`. The client runs them by file name once per changed batch, after the new certificate and key paths are active. It skips hooks when the certificate material stays the same. The example `restart-web-servers` hook calls the script in `/opt/clm-client/bin/`, which restarts running Apache and Nginx services if present. To disable the example hook, remove its execute permission.
 
-```nginx
-ssl_certificate /opt/clm-client/certificates/<storage-id>/current/fullchain.pem;
-ssl_certificate_key /opt/clm-client/certificates/<storage-id>/current/privkey.pem;
-```
-
-```sh
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-The standard Nginx master runs as root and can open the mode `0600` private key. A deployment that runs a master unprivileged must arrange narrowly scoped local access to the selected certificate's paths and take ownership of checking that access on subsequent updates. The client manages registered certificates and generation links. It never rewrites Nginx or other service configuration.
-
-## Commands and service profiles
-
-Install and update report download, validation, activation and service activity on stderr. Inspection commands display labelled records by default and support JSON on stdout.
-
-| Command | Behaviour |
-|---|---|
-| `clm-client available [--json]` | Lists valid certificates the server authorises. |
-| `clm-client install DNS_NAME [--service PROFILE]` | Installs or updates the certificate and registers it for scheduled updates. Repeat `--service` to register multiple profiles. |
-| `clm-client list [--json]`, `clm-client show DNS_NAME [--json]` | Reports local certificate paths, validity and associations. |
-| `clm-client update [DNS_NAME]` | Checks for changed generations. Omitting the name checks every installed certificate. |
-| `clm-client remove DNS_NAME [--force]` | Removes a certificate. Detach it from service configuration before confirming removal with `--force`. |
-| `clm-client status [--json]`, `clm-client version` | Reports update status and repository health, or prints the version. |
-
-Locally trusted administrators can create profiles under `/opt/clm-client/config/services.d/` with `name`, `check`, `reload`, optional `verify` and an optional per-command `timeout` from 1 to 300 seconds. Commands are argument arrays executed as the local update user without a shell. Profiles must be owned by the authorised local account or root and protected from other writers. The installer supplies the [Nginx profile](../examples/client/services.d/nginx.yaml).
-
-The updater fetches manifests first and skips unchanged generations. It fully validates archives and certificates before switching stable links. A batch validates affected service configuration before reloading each service once. On failure it restores the previous links, revalidates and reloads the previous configuration. If rollback fails, it preserves the recovery journal and generation files. When the server is unavailable or denies access, installed files remain in place.
-
-The persistent timer checks between 04:00 and 07:00 UTC, with a random delay. Use `systemctl edit clm-client-update.timer` for deployment-specific scheduling.
+A hook receives `CLM_CLIENT_ROOT`, `CLM_HOOK_EVENT` and `CLM_UPDATED_CERTIFICATES`. The last variable lists the changed DNS identifiers separated by newlines. The update event is `updated`. If a hook fails, CLM restores the previous certificate links and calls each attempted hook with `rollback`. Make hooks safe to retry. The client limits each run to 120 seconds and reports failures by script name. Keep script dependencies and any output under your own control. Configure services independently to consume the stable paths shown by `status`.
