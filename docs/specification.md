@@ -119,13 +119,13 @@ All application-specific files must be stored under `/opt/clm`.
 ├── app/
 ├── venv/
 ├── acme/
-│   ├── engine/
+│   ├── acme.sh
+│   ├── dnsapi/
 │   └── instances/
 ├── config/
 │   ├── clm.yaml
 │   ├── route53.yaml
 │   └── aws/
-│       ├── config
 │       └── credentials
 ├── data/
 │   ├── clm.db
@@ -286,9 +286,8 @@ Each configured AWS account must correspond to exactly one independent acme.sh i
 
 ```text
 /opt/clm/acme/
-├── engine/
-│   ├── acme.sh
-│   └── dnsapi/
+├── acme.sh
+├── dnsapi/
 └── instances/
     ├── primary/
     │   ├── config/

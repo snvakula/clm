@@ -70,6 +70,7 @@ def test_account_environments_directories_and_options(route, tmp_path, monkeypat
     mock._command("renew", second, "git.example.com", "ec-256", [])
     (args, env), (other_args, other_env) = received
     assert PRODUCTION in args and PRODUCTION in other_args
+    assert args[0] == other_args[0] == str(tmp_path / "acme/acme.sh")
     assert "--ecc" in other_args and "--ecc" not in args
     assert env["AWS_ACCESS_KEY_ID"] == "MOCK1"
     assert env["AWS_SESSION_TOKEN"] == "SESSION1"

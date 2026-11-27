@@ -26,7 +26,7 @@ class Acme:
         self.root = root
         self.route = route
         self.email = email
-        self.engine = root / "acme/engine"
+        self.engine = root / "acme"
         self.lock_descriptor: int | None = None
 
     def instance(self, account: str) -> Path:
