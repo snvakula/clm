@@ -15,7 +15,7 @@ def normalise_identifier(value: str) -> str:
     if "*" in name or not name:
         raise ValueError("Invalid wildcard or DNS identifier")
     try:
-        name = idna.encode(name, uts46=True, std3_rules=True).decode("ascii").lower()
+        name = idna.encode(name, uts46=True, std3_rules=True).decode("ascii").lower().removesuffix(".")
     except idna.IDNAError as exc:
         raise ValueError("Invalid DNS identifier") from exc
     if len(name) > 253 or "." not in name or not re.search(r"[a-z]", name.rsplit(".", 1)[1]):
@@ -24,6 +24,13 @@ def normalise_identifier(value: str) -> str:
 
 
 def storage_id(value: str) -> str:
-    # Hex encoding is reversible and collision-free; split long identifiers into
-    # path components at repository level rather than using this as a filename.
+    # Unpadded base64url encodes canonical identifiers without collisions.
     return base64.urlsafe_b64encode(normalise_identifier(value).encode()).decode().rstrip("=")
+
+
+def storage_path(value: str) -> tuple[str, ...]:
+    """Keep path components within the filesystem limit, with distinct namespaces."""
+    key = storage_id(value)
+    if len(key) <= 250:
+        return (key,)
+    return (".long", key[:200], key[200:])

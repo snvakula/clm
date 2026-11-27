@@ -7,10 +7,10 @@ name = "clm"
 version = "0.1.0"
 description = "Self-hosted certificate lifecycle management"
 requires-python = ">=3.11"
-dependencies = ["cryptography==46.0.3", "PyYAML==6.0.3", "idna==3.11"]
+dependencies = ["cryptography==48.0.0", "PyYAML==6.0.3", "idna==3.15"]
 
 [project.optional-dependencies]
-dev = ["pytest==8.4.2", "ruff==0.14.5"]
+dev = ["pytest==9.0.3", "ruff==0.15.15"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
