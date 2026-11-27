@@ -108,11 +108,12 @@ remove_legacy_layout() {
     done
 }
 
-remove_legacy_link() {
+install_cli_link() {
     local link=$1 destination=$2
     if [[ -L $link && $(readlink -- "$link") == "$destination" ]]; then
-        rm -- "$link"
+        return
     fi
+    ln -sT -- "$destination" "$link"
 }
 
 install_client_units() {
@@ -173,7 +174,8 @@ install_client() {
     install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm-client" "$root/bin/clm-client"
-    remove_legacy_link /usr/local/bin/clm-client "$root/bin/clm-client"
+    (umask 022; mkdir -p /usr/local/bin)
+    install_cli_link /usr/local/bin/clm-client "$root/bin/clm-client"
     remove_legacy_layout "$root"
     flock -u 8
     install_client_units "$sources" "$root" /etc/systemd/system

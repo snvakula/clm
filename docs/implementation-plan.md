@@ -15,6 +15,12 @@ The feature branch retains the original foundation. The [specification](specific
 | 7. Testing and security review | Local automated suite, lint, formatting, dependency checks, source patch checks and Nginx configuration checks passed. Production deployment acceptance is pending. |
 | 8. Documentation and pull request | Administrator, client and operations guides are complete. [Pull request #1](https://github.com/snvakula/clm/pull/1) is open for review and manual acceptance. |
 
+## Renewal and installer follow-up
+
+- A renewal that is not due now completes with the current generation. An interrupted attempt or failed export retains enough state to recover without requesting a duplicate certificate.
+- Both installers restore their command links under `/usr/local/bin/`. Repeated installation preserves correct links and reports a conflict if a name belongs to another file or link.
+- On Debian 13 Python 3.13, all 68 tests passed with the pinned acme.sh archive and Debian Nginx available. Ruff and ShellCheck passed. Full installation, upgrade and the renewal timer still need verification on the deployment host.
+
 ## Test results
 
 - Python 3.11.18 and Debian 13 Python 3.13.5 each passed all 38 tests, with the pinned upstream engine archive and Debian Nginx 1.26.3 available to the tests.

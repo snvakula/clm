@@ -139,7 +139,7 @@ System-level integration files may be installed outside this directory where req
 
 - Links under `/etc/systemd/system/` to the unit files in the corresponding application’s `systemd/` directory.
 - Nginx configuration under `/etc/nginx/`.
-- CLI executables under the corresponding application installation directory.
+- CLI executables under the corresponding application installation directory, with command links in `/usr/local/bin/`.
 - Operating system packages and system users.
 
 Do not create application-specific storage directories under `/var/lib`, `/var/log` or `/etc`.
@@ -887,7 +887,7 @@ Installation scripts must:
 - Create Python virtual environments.
 - Install pinned Python dependencies.
 - Install systemd units.
-- Install CLI executables under the application’s bin directory.
+- Install CLI executables under the application’s bin directory and link them from `/usr/local/bin/`.
 - Install or provide the Nginx configuration.
 - Validate the resulting configuration.
 - Install service and timer definitions under each application’s `systemd/` directory, link them from `/etc/systemd/system/`, and enable and start the renewal and update timers.
