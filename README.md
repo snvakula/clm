@@ -1,19 +1,16 @@
-# Certificate Lifecycle Management (CLM)
+# Certificate Lifecycle Management
 
-CLM is a planned self-hosted system for centralised issuance, renewal, private key rotation and secure distribution of publicly trusted TLS certificates.
+CLM centralises publicly trusted TLS certificate issuance and renewal on Debian 13. Authorised clients pull versioned PEM certificate and private key bundles over HTTPS, validate them and activate them together. Each certificate covers one exact hostname or wildcard and can be shared by several clients.
 
-## Architecture
+- `clm` is the local administrative CLI. It uses SQLite, an immutable certificate repository and one isolated acme.sh instance per AWS account.
+- `clmd` is the distribution API. Nginx terminates HTTPS and forwards requests to the API through a Unix socket.
+- `clm-client` installs and updates certificates through stable paths and rolls back if a local service check or reload fails.
 
-- `clm`: local administrative CLI.
-- `clmd`: authenticated HTTPS distribution API.
-- `clm-client`: pull-based installation and automatic certificate updates, with service validation and rollback.
+CLM uses Let's Encrypt production and Route 53 DNS-01. It uses a pinned acme.sh release with a reviewed `dns_aws` patch that restricts writes to the configured public hosted zone and preserves unrelated TXT values.
 
-The target platform is Debian 13, using Python, SQLite, FastAPI, Nginx, systemd and acme.sh. Certificate issuance uses Let's Encrypt production and DNS-01 through AWS Route 53, with isolated ACME instances per AWS account.
+## Start here
 
-CLM supports individual and wildcard certificates, certificate reuse across authorised clients and atomic versioned certificate storage. Deployment settings are organisation-independent.
-
-## Project status
-
-Specification defined; implementation not yet available.
-
-See [technical specification](docs/specification.md) for requirements and acceptance criteria, and [development instructions](AGENTS.md) for coding agent guidance.
+- [Administrator guide](docs/administration.md) for native installation, AWS, delegation, CLI commands, migration and the distribution API.
+- [Client guide](docs/client.md) for provisioning, Nginx configuration and automatic updates.
+- [Operations guide](docs/operations.md) for security, monitoring, upgrades, backups, recovery and manual acceptance tests.
+- [Technical specification](docs/specification.md), [implementation plan](docs/implementation-plan.md) and [development instructions](AGENTS.md).

@@ -1,0 +1,1 @@
+The patch applies to acme.sh 3.1.7, revision [5567d7fe7298fd37aca53194885ba444c6678669](https://github.com/acmesh-official/acme.sh/tree/5567d7fe7298fd37aca53194885ba444c6678669). The installer verifies the original source archive before applying the patch. The upstream source and its modified DNS plugin use [GNU GPL version 3](LICENSE.md).

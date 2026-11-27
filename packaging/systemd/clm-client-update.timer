@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily CLM client certificate update
+
+[Timer]
+OnCalendar=*-*-* 04:00:00 UTC
+RandomizedDelaySec=3h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

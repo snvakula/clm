@@ -1,0 +1,12 @@
+accounts:
+  primary:
+    credentials_profile: primary
+  secondary:
+    credentials_profile: secondary
+challenge_aliases:
+  acme.example.com:
+    account: primary
+    hosted_zone_id: ZXXXXXXXXXXXXX
+  acme.example.org:
+    account: secondary
+    hosted_zone_id: ZYYYYYYYYYYYYY

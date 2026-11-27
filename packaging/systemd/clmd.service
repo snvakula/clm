@@ -1,0 +1,25 @@
+[Unit]
+Description=CLM certificate distribution API
+Requires=clmd.socket
+After=clmd.socket
+
+[Service]
+Type=simple
+User=clm-api
+Group=clm-api
+ExecStart=/opt/clm/bin/clmd
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/opt/clm/data /opt/clm/logs/clmd.log
+ReadOnlyPaths=/opt/clm/data/certificates
+InaccessiblePaths=/opt/clm/acme /opt/clm/config
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+Restart=on-failure

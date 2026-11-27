@@ -1,0 +1,16 @@
+[Unit]
+Description=Check and renew CLM certificates
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=clm-api
+UMask=0077
+ExecStart=/opt/clm/bin/clm cert renew --all
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/clm/data /opt/clm/acme/instances /opt/clm/run /opt/clm/logs

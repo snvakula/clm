@@ -1,0 +1,5 @@
+name: nginx
+check: [/usr/sbin/nginx, -t]
+reload: [/usr/bin/systemctl, reload, nginx.service]
+verify: [/usr/bin/systemctl, is-active, --quiet, nginx.service]
+timeout: 30
