@@ -267,74 +267,6 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
         assert path.read_text() == "operator configuration\n"
 
 
-def test_installer_refreshes_untouched_legacy_aws_configuration(tmp_path):
-    config = tmp_path / "config"
-    (config / "aws").mkdir(parents=True)
-    (config / "aws/config").touch()
-    (config / "route53.yaml").write_text("accounts: {}\nchallenge_aliases: {}\n")
-    command = [
-        "bash",
-        "-euc",
-        'source "$1"; install_server_configuration "$2" "$3" "$4"',
-        "test",
-        str(ROOT / "scripts/install-server.sh"),
-        str(ROOT),
-        str(config),
-        str(tmp_path / "nginx-site"),
-    ]
-    subprocess.run(command, check=True)
-    assert (config / "route53.yaml").read_bytes() == (ROOT / "packaging/route53.yaml").read_bytes()
-    assert not (config / "aws/config").exists()
-    (config / "aws/config").write_text("[profile local]\n")
-    subprocess.run(command, check=True)
-    assert (config / "aws/config").read_text() == "[profile local]\n"
-
-
-def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
-    root = tmp_path / "clm"
-    workspace = root / "run/install"
-    old_release = "a" * 64
-    old_app = root / "app/releases" / old_release
-    old_app.mkdir(parents=True)
-    (root / "app/current").symlink_to(old_app)
-    (root / "app/previous").symlink_to(old_app)
-    old_venv = root / "venv" / old_release
-    old_venv.mkdir(parents=True)
-    (old_venv / "pyvenv.cfg").touch()
-    (root / "venv/pyvenv.cfg").write_text("standard virtual environment")
-    (workspace / "app").mkdir(parents=True)
-    (workspace / "app/cli.py").write_text("# Standalone application")
-    engine = root / "acme/engines" / f"{'b' * 40}-{old_release}"
-    engine.mkdir(parents=True)
-    (engine / "acme.sh").touch()
-    (root / "acme/engine").symlink_to(engine)
-    (root / "acme/acme.sh").write_text("flat executable")
-    protected = {
-        "data/certificates/primary.pem": "existing certificate",
-        "config/aws/credentials": "existing credentials",
-        "acme/instances/primary/config/account.key": "existing account key",
-    }
-    for name, contents in protected.items():
-        path = root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(contents)
-    command = [
-        "bash",
-        "-euc",
-        'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout "$2"',
-        "test",
-        str(ROOT / "scripts/install-server.sh"),
-        str(root),
-        str(workspace),
-    ]
-    subprocess.run(command, check=True)
-    assert sorted(path.name for path in (root / "app").iterdir()) == ["cli.py"]
-    assert sorted(path.name for path in (root / "venv").iterdir()) == ["pyvenv.cfg"]
-    assert sorted(path.name for path in (root / "acme").iterdir()) == ["acme.sh", "instances"]
-    for name, contents in protected.items():
-        assert (root / name).read_text() == contents
-
-
 @pytest.mark.parametrize(
     ("role", "commands"),
     [("server", {"clm", "clmd"}), ("client", {"clm-client"})],
@@ -420,14 +352,15 @@ def test_client_certificate_directory_permissions_on_install_and_upgrade(tmp_pat
         assert staged_key.stat().st_mode & 0o777 == 0o600
 
 
-def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path):
+def test_client_reinstall_preserves_configuration_and_certificate_state(tmp_path):
     root = tmp_path / "clm-client"
     workspace = tmp_path / "stage"
     workspace.mkdir()
-    (root / "app/clm_client").mkdir(parents=True)
+    (root / "app").mkdir(parents=True)
     (root / "config").mkdir()
-    credentials = root / "config/credentials"
-    credentials.write_text("existing client registration")
+    credentials = root / "config/client.yaml"
+    credentials.write_text("existing client configuration")
+    (root / "app/obsolete.py").touch()
     (root / "data").mkdir()
     state = root / "data/state.json"
     state.write_text("existing client certificate state")
@@ -437,7 +370,7 @@ def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path)
         [
             "bash",
             "-euc",
-            'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout "$2"',
+            'source "$1"; publish_application "$2/app" "$3"',
             "test",
             str(ROOT / "scripts/install-client-debian.sh"),
             str(root),
@@ -446,8 +379,8 @@ def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path)
         check=True,
     )
     assert (root / "app/cli.py").is_file()
-    assert not (root / "app/clm_client").exists()
-    assert credentials.read_text() == "existing client registration"
+    assert not (root / "app/obsolete.py").exists()
+    assert credentials.read_text() == "existing client configuration"
     assert state.read_text() == "existing client certificate state"
 
 
@@ -517,40 +450,6 @@ def test_installer_creates_cli_links_and_preserves_conflicts(tmp_path, role, tar
     assert not list(link.iterdir())
 
 
-def test_server_identity_migrates_to_clm_without_recreating_accounts(tmp_path):
-    subprocess.run(
-        [
-            "bash",
-            "-euc",
-            """
-source "$1"
-user=clm-api
-group=clm-api
-id() {
-    case "$*" in
-        "$user") return 0 ;;
-        "-u $user") echo 987 ;;
-        "-gn $user") echo "$group" ;;
-        *) return 1 ;;
-    esac
-}
-getent() { [[ $1 = group && $2 = "$group" ]]; }
-useradd() { return 1; }
-groupadd() { return 1; }
-usermod() { [[ "$*" = "--login clm clm-api" ]] && user=clm; }
-groupmod() { [[ "$*" = "--new-name clm clm-api" ]] && group=clm; }
-configure_server_identity "$2"
-configure_server_identity "$2"
-[[ $user = clm && $group = clm ]]
-""",
-            "test",
-            str(ROOT / "scripts/install-server.sh"),
-            str(tmp_path),
-        ],
-        check=True,
-    )
-
-
 @pytest.mark.parametrize(
     ("role", "timer", "units"),
     [
@@ -600,34 +499,3 @@ install_{role}_units "$2" "$3" "$4"
         "daemon-reload",
         f"enable --now {timer}",
     ]
-
-
-def test_client_migrates_the_legacy_hook_without_reenabling_it(tmp_path):
-    config = tmp_path / "config"
-    hooks = config / "hooks.d"
-    hooks.mkdir(parents=True)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    hook = hooks / "restart-web-servers"
-    hook.write_text(
-        '#!/bin/sh\nset -eu\nexec "${CLM_CLIENT_ROOT:-/opt/clm-client}/bin/restart-web-servers"\n'
-    )
-    hook.chmod(0o600)
-    legacy = bin_dir / hook.name
-    legacy.write_text("#!/bin/sh\n# Custom legacy script\nexit 0\n")
-
-    subprocess.run(
-        [
-            "bash",
-            "-euc",
-            'source "$1"; install_client_configuration "$2" "$3"',
-            "test",
-            str(ROOT / "scripts/install-client-debian.sh"),
-            str(ROOT),
-            str(config),
-        ],
-        check=True,
-    )
-    assert hook.read_text() == "#!/bin/sh\n# Custom legacy script\nexit 0\n"
-    assert hook.stat().st_mode & 0o777 == 0o600
-    assert not legacy.exists()

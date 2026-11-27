@@ -102,13 +102,6 @@ class Client:
             if current != row["version"]:
                 raise ValueError(f"Local repository generation differs from state for {identifier}")
             self.files.clean(identifier, {row["version"], row["previous"]})
-        for identifier in state.get("removals", []):
-            if self.files.base(identifier).is_dir():
-                self.files.activate(identifier, None)
-                self.files.clean(identifier, set())
-        if state.get("removals"):
-            state.pop("removals")
-            self.save(state)
 
     def inspect(self, state: dict, identifier: str) -> dict[str, Any]:
         row = state["certificates"].get(identifier)
