@@ -669,7 +669,7 @@ Separate API read access from certificate issuance permissions and AWS credentia
 
 Protect all private keys, authentication credentials and sensitive configuration files using restrictive permissions.
 
-Private key files must use mode 0600 by default.
+Server private key files must use mode `0600` by default. Published client private keys use mode `0640` as specified in §15.
 
 Store certificates and private keys as standard PEM files without application-level encryption. This applies to published and historical generations, internal acme.sh storage, ACME account keys and temporary processing files. Do not implement encryption or decryption, master encryption keys, encryption key rotation, custom encrypted containers or additional encryption-related application dependencies.
 
@@ -720,7 +720,7 @@ An update lists all certificates assigned to this client's token and synchronise
 ## 15. Client certificate storage
 
 Use the same versioned generation model as the server.
-Install the top-level client certificate directory with mode `0750`.
+Use mode `0750` for the top-level client certificate directory and its published directory tree. Use mode `0640` for published certificates, private keys and generation manifests. Apply these modes to existing generations during upgrades. Keep directories for unfinished generations private until publication.
 
 ```text
 /opt/clm-client/certificates/

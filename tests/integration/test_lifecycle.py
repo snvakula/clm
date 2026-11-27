@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 from pathlib import Path
 
@@ -242,7 +243,11 @@ def installed(tmp_path, pki, server, monkeypatch):
 
     monkeypatch.setattr(application, "Remote", connect)
     state = client.state()
-    assert client.update(state) == (1, 1)
+    previous_umask = os.umask(0o077)
+    try:
+        assert client.update(state) == (1, 1)
+    finally:
+        os.umask(previous_umask)
     return client, remote, state
 
 
@@ -251,7 +256,12 @@ def test_install_idempotency_update_and_unavailable_server(server, installed):
     client, remote, state = installed
     info = client.inspect(state, DOMAIN)
     assert client.config_file.stat().st_mode & 0o777 == 0o600
-    assert Path(info["private_key_path"]).stat().st_mode & 0o777 == 0o600
+    generation = client.files.directory(DOMAIN, 1)
+    assert Path(info["private_key_path"]).resolve() == generation / "privkey.pem"
+    for directory in (generation, generation.parent, client.files.base(DOMAIN)):
+        assert directory.stat().st_mode & 0o777 == 0o750
+    for path in generation.iterdir():
+        assert path.stat().st_mode & 0o777 == 0o640
     client.update(state)
     assert remote.downloads == 1
     admin.obtain(DOMAIN, "renew")

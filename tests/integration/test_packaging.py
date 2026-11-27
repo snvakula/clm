@@ -377,20 +377,47 @@ def test_client_certificate_directory_permissions_on_install_and_upgrade(tmp_pat
     assert certificates.stat().st_mode & 0o777 == 0o750
 
     certificates.chmod(0o700)
-    generation = certificates / "generation"
-    generation.mkdir(mode=0o700)
-    key = generation / "privkey.pem"
-    key.write_text("test key")
-    key.chmod(0o600)
+    base = certificates / "certificate"
+    versions = base / "versions"
+    generation = versions / "000001"
+    for directory in (base, versions, generation):
+        directory.mkdir(mode=0o700)
+    current = base / "current"
+    current.symlink_to("versions/000001")
+    files = [
+        generation / name
+        for name in ("cert.pem", "chain.pem", "fullchain.pem", "privkey.pem", "manifest.json")
+    ]
+    for path in files:
+        path.write_text(path.name)
+        path.chmod(0o600)
+    staging = versions / ".stage-interrupted"
+    staging.mkdir(mode=0o700)
+    staged_key = staging / "privkey.pem"
+    staged_key.write_text("staged key")
+    staged_key.chmod(0o600)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    external_key = outside / "privkey.pem"
+    external_key.write_text("external key")
+    external_key.chmod(0o600)
+    (certificates / "outside").symlink_to(outside, target_is_directory=True)
+    (base / "privkey.pem").symlink_to(external_key)
 
     for _ in range(2):
         subprocess.run(command, check=True)
-        assert certificates.stat().st_mode & 0o777 == 0o750
+        for directory in (certificates, base, versions, generation):
+            assert directory.stat().st_mode & 0o777 == 0o750
         assert (tmp_path / "data").stat().st_mode & 0o777 == 0o700
         assert (tmp_path / "logs").stat().st_mode & 0o777 == 0o700
-        assert generation.stat().st_mode & 0o777 == 0o700
-        assert key.stat().st_mode & 0o777 == 0o600
-        assert key.read_text() == "test key"
+        assert current.readlink() == Path("versions/000001")
+        for path in files:
+            assert path.stat().st_mode & 0o777 == 0o640
+            assert path.read_text() == path.name
+        assert outside.stat().st_mode & 0o777 == 0o700
+        assert external_key.stat().st_mode & 0o777 == 0o600
+        assert staging.stat().st_mode & 0o777 == 0o700
+        assert staged_key.stat().st_mode & 0o777 == 0o600
 
 
 def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path):

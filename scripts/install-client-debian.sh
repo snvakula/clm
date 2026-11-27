@@ -11,6 +11,11 @@ install_client_storage() {
     local root=$1
     install -d -m 0750 "$root/certificates"
     install -d -m 0700 "$root/data" "$root/logs"
+    find -H "$root/certificates" \
+        -type d -name '.stage-*' -prune -o \
+        -type d -exec chmod 00750 -- {} + -o \
+        -type f \( -name cert.pem -o -name chain.pem -o -name fullchain.pem \
+            -o -name privkey.pem -o -name manifest.json \) -exec chmod 0640 -- {} +
 }
 
 install_client_configuration() {
