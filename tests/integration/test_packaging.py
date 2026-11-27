@@ -192,3 +192,49 @@ def test_nginx_configuration_with_debian_binary(tmp_path, pki):
         text = config.read_text().replace("http {", "http { " + block, 1)
         config.write_text(text)
     subprocess.run([nginx, "-t", "-p", str(tmp_path), "-c", str(config)], check=True)
+
+
+@pytest.mark.parametrize("role", ["server", "client"])
+def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, role):
+    config = tmp_path / "config"
+    config.mkdir()
+    site = tmp_path / "sites-available/clm"
+    site.parent.mkdir()
+    command = [
+        "bash",
+        "-eu",
+        "-c",
+        'source "$1"; "install_${2}_configuration" "$3" "$4" "$5"',
+        "test",
+        str(ROOT / "scripts/install-configuration.sh"),
+        role,
+        str(ROOT),
+        str(config),
+        str(site),
+    ]
+    subprocess.run(command, check=True)
+    if role == "server":
+        expected = {
+            config / "clm.yaml": 0o600,
+            config / "route53.yaml": 0o600,
+            config / "aws/credentials": 0o600,
+            config / "aws/config": 0o600,
+            site: 0o644,
+        }
+        from clm_common.config import load_config
+
+        assert load_config(config / "route53.yaml") == {"accounts": {}, "challenge_aliases": {}}
+        assert "#     hosted_zone_id:" in (config / "route53.yaml").read_text()
+        assert "aws_secret_access_key =" in (config / "aws/credentials").read_text()
+    else:
+        expected = {config / "client.yaml": 0o600, config / "services.d/nginx.yaml": 0o600}
+        assert not (config / "credentials").exists()
+
+    assert not list(tmp_path.rglob("*.example"))
+    for path, mode in expected.items():
+        assert path.is_file()
+        assert path.stat().st_mode & 0o777 == mode
+        path.write_text("operator configuration\n")
+    subprocess.run(command, check=True)
+    for path in expected:
+        assert path.read_text() == "operator configuration\n"

@@ -1,0 +1,14 @@
+# Add each AWS account and its credentials profile under accounts.
+# Add each public challenge alias and its hosted zone under challenge_aliases.
+# Replace the empty mappings below with your settings, using this layout:
+#
+# accounts:
+#   primary:
+#     credentials_profile: primary
+# challenge_aliases:
+#   acme.example.com:
+#     account: primary
+#     hosted_zone_id: ZXXXXXXXXXXXXX
+
+accounts: {}
+challenge_aliases: {}

@@ -55,6 +55,9 @@ switch_link() {
     mv -Tf -- "$temporary" "$link"
 }
 
+# shellcheck source=/dev/null
+. "$sources/scripts/install-configuration.sh"
+
 if [[ $product == server ]]; then
     getent group clm-api >/dev/null || groupadd --system clm-api
     id clm-api >/dev/null 2>&1 || useradd --system --gid clm-api --home-dir "$root"         --no-create-home --shell /usr/sbin/nologin clm-api
@@ -64,15 +67,8 @@ if [[ $product == server ]]; then
     fi
     install -d -m 3770 -o root -g clm-api "$root/data"
     install -d -m 2750 -o root -g clm-api "$root/data/certificates" "$root/logs"
-    install -d -m 0700 "$root/config/aws" "$root/acme" "$root/acme/instances" "$root/acme/engines"
-    keep_file 0600 root "$sources/examples/server/clm.yaml" "$root/config/clm.yaml"
-    if [[ ! -e $root/config/route53.yaml ]]; then
-        printf 'accounts: {}\nchallenge_aliases: {}\n' > "$workspace/route53.yaml"
-        keep_file 0600 root "$workspace/route53.yaml" "$root/config/route53.yaml"
-    fi
-    keep_file 0600 root /dev/null "$root/config/aws/credentials"
-    keep_file 0600 root /dev/null "$root/config/aws/config"
-    install -m 0644 "$sources/packaging/nginx/clm.conf" "$root/config/nginx.conf.example"
+    install -d -m 0700 "$root/acme" "$root/acme/instances" "$root/acme/engines"
+    install_server_configuration "$sources" "$root/config" /etc/nginx/sites-available/clm
     keep_file 0640 clm-api /dev/null "$root/run/publication.lock"
     keep_file 0600 root /dev/null "$root/run/operations.lock"
     exec 8<>"$root/run/operations.lock"
@@ -95,12 +91,11 @@ if [[ $product == server ]]; then
         mv -T -- "$workspace/engine" "$engine"
     fi
 else
-    install -d -m 0700 "$root/config/services.d" "$root/certificates" "$root/data" "$root/logs"
+    install -d -m 0700 "$root/certificates" "$root/data" "$root/logs"
     keep_file 0600 root /dev/null "$root/run/update.lock"
     exec 8<>"$root/run/update.lock"
     flock -x 8
-    keep_file 0600 root "$sources/examples/client/client.yaml" "$root/config/client.yaml"
-    keep_file 0600 root "$sources/examples/client/services.d/nginx.yaml" "$root/config/services.d/nginx.yaml"
+    install_client_configuration "$sources" "$root/config"
 fi
 
 release=$(
@@ -141,7 +136,6 @@ fi
 
 previous=$(readlink "$root/app/current" || :)
 if [[ $product == server ]]; then
-    previous_engine=$(readlink "$root/acme/engine" || :)
     # SQLite derives its WAL and shared-memory permissions from the database mode.
     keep_file 0660 clm-api /dev/null "$root/data/clm.db"
     "$environment/bin/python" - "$root/data/clm.db" <<'PY'
@@ -154,7 +148,6 @@ with database.connect() as connection:
     if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
         raise SystemExit("CLM database integrity check failed")
 PY
-    nginx -t
     units=(clmd.socket clmd.service clm-renew.timer clm-renew.service)
 else
     units=(clm-client-update.timer clm-client-update.service)
@@ -172,26 +165,6 @@ if [[ $product == server ]]; then
 fi
 switch_link "$root/app/current" "releases/$release"
 
-activate() {
-    systemctl daemon-reload || return
-    if [[ $product == server ]]; then
-        systemctl enable --now clmd.socket clm-renew.timer || return
-        systemctl try-restart clmd.service || return
-    else
-        systemctl enable --now clm-client-update.timer || return
-    fi
-}
-if ! activate; then
-    if [[ -n $previous ]]; then
-        switch_link "$root/app/current" "$previous"
-        if [[ $product == server && -n $previous_engine ]]; then
-            switch_link "$root/acme/engine" "$previous_engine"
-        fi
-        activate || :
-    fi
-    echo 'Failed to activate the systemd units.' >&2
-    exit 1
-fi
 if [[ -n $previous && $previous != "releases/$release" ]]; then
     switch_link "$root/app/previous" "$previous"
 fi
@@ -202,4 +175,7 @@ for candidate in "$root/app/releases/"*; do
         rm -rf -- "$candidate" "$root/venv/$name"
     fi
 done
-echo "Installed $program under $root."
+printf 'Installed %s under %s. Configuration directory %s/config.\n' "$program" "$root" "$root"
+if [[ $product == server ]]; then
+    echo 'Nginx site configuration is at /etc/nginx/sites-available/clm.'
+fi

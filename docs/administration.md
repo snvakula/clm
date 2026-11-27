@@ -10,9 +10,16 @@ Run the installer as root from the reviewed checkout.
 sudo ./scripts/install-server.sh
 ```
 
-The installer creates `/opt/clm`, the `clm-api` system user, the application virtual environment, CLI links, the distribution socket and the renewal timer. It provides the Nginx configuration at `/opt/clm/config/nginx.conf.example`.
+The installer places the working configuration in `/opt/clm/config/`. Edit `clm.yaml` for the ACME account email, `route53.yaml` for accounts and aliases, and `aws/credentials` for the matching AWS profiles. The Route 53 file includes the mapping layout in comments. Re-running the installer preserves your files.
 
-Copy the template into `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
+Edit `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
+
+Load and enable the installed CLM units when the host configuration is ready.
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now clmd.socket clm-renew.timer
+```
 
 The socket at `/opt/clm/run/clmd.sock` is accessible to the standard Debian Nginx group `www-data`. There is no application TCP listener.
 
