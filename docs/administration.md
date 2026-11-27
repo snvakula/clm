@@ -62,7 +62,7 @@ Run the administrative executable at `/opt/clm/bin/clm` as root. Quote wildcard 
 | `clm status [--json]` | Reports certificate expiry, renewal attempts and repository inconsistencies. |
 | `clm check`, `clm version` | Runs local checks or prints the application version. |
 
-Supported key algorithms are `ec-256` (default), `ec-384`, `rsa-2048`, `rsa-3072` and `rsa-4096`. Non-forced renewal honours acme.sh exit status 2 as a skipped operation. Avoid forced retries during CA rate limiting.
+Supported key algorithms are `ec-256` (default), `ec-384`, `rsa-2048`, `rsa-3072` and `rsa-4096`. When acme.sh reports that renewal is not due, CLM keeps the current generation and skips export unless it is recovering an interrupted renewal. Avoid forced retries during CA rate limiting.
 
 ## Import existing certificates
 
