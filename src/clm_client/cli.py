@@ -2,16 +2,17 @@
 
 import argparse
 import getpass
-import json
 import os
 import sys
 from importlib.metadata import version
 from pathlib import Path
 
-from clm_common.filesystem import read_regular
-from clm_common.identity import normalise_identifier
-from clm_common.locking import exclusive_lock
-from clm_common.logging import configure_logging
+from . import __version__
+from .filesystem import read_regular
+from .identity import normalise_identifier
+from .locking import exclusive_lock
+from .logging import configure_logging, progress
+from .output import display
 
 from .application import Client
 
@@ -40,19 +41,6 @@ def arguments() -> argparse.ArgumentParser:
         if name == "remove":
             command.add_argument("--force", action="store_true")
     return parser
-
-
-def display(value, machine: bool = False) -> None:
-    if machine:
-        print(json.dumps(value, indent=2, sort_keys=True))
-    elif isinstance(value, list):
-        for item in value:
-            display(item)
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            print(f"{key}: {item}")
-    else:
-        print(value)
 
 
 def dispatch(args: argparse.Namespace, client: Client) -> None:
@@ -100,6 +88,8 @@ def dispatch(args: argparse.Namespace, client: Client) -> None:
                 token = getpass.getpass("CLM access token: ", stream=terminal)
         display(f"Registered with the CLM server as {client.initialise(args.server, token)}")
     elif action == "available":
+        if not args.json:
+            progress(client.logger, "Fetching the list of certificates from CLM")
         display(client.remote().available(), args.json)
     elif action == "install":
         client.apply(state, [identifier], service_names=args.service)
@@ -113,23 +103,29 @@ def dispatch(args: argparse.Namespace, client: Client) -> None:
     elif action == "update":
         if identifier and identifier not in state["certificates"]:
             raise ValueError("Certificate is not installed")
-        client.apply(state, [identifier] if identifier else sorted(state["certificates"]))
+        identifiers = [identifier] if identifier else sorted(state["certificates"])
+        if identifiers:
+            client.apply(state, identifiers)
+            display("Certificate update check complete")
+        else:
+            display("No certificates installed")
     elif action == "list":
         display([client.inspect(state, item) for item in sorted(state["certificates"])], args.json)
     elif action == "show":
         display(client.inspect(state, identifier), args.json)
     elif action == "remove":
         client.remove(state, identifier, args.force)
+        display(f"Removed {identifier}")
 
 
 def main() -> int:
     os.umask(0o077)
     args = arguments().parse_args()
     if args.action == "version":
-        print(version("clm"))
+        print(__version__ or version("clm"))
         return 0
     root = args.root.resolve()
-    logger = configure_logging(root / "logs", "clm-client")
+    logger = configure_logging(root / "logs", "clm-client", terminal=True)
     client = Client(root, logger)
     try:
         with exclusive_lock(root / "run/update.lock"):

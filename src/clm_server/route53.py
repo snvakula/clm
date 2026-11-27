@@ -10,9 +10,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from clm_common.config import load_config
-from clm_common.filesystem import read_regular
-from clm_common.identity import normalise_identifier
+from .config import load_config
+from .filesystem import read_regular
+from .identity import normalise_identifier
 
 PREFIX = "_acme-challenge."
 LABEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}")

@@ -6,9 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clm_client.application import Client
-from clm_common.certificate import MAX_FILE, parse_manifest
-from clm_common.identity import storage_id
-from clm_common.locking import publication_lock
+from clm_server.certificate import MAX_FILE, parse_manifest
+from clm_server.identity import storage_id
+from clm_server.locking import publication_lock
 from clm_server.api import create_app
 from clm_server.route53 import Target
 from clm_server.service import Administration
@@ -79,6 +79,7 @@ def url(identifier, suffix):
 def test_issuance_reuse_rotation_authorisation_and_leases(server):
     admin, engine, http = server
     git, jira, kb = [admin.client_change(name, "add") for name in ("git", "jira", "kb")]
+    assert len({git, jira, kb}) == 3
     admin.client_change("git", "grant", DOMAIN)
     admin.client_change("jira", "grant", WILDCARD)
     admin.client_change("kb", "grant", WILDCARD)
@@ -287,7 +288,7 @@ def test_client_recovers_killed_update_and_removal(installed):
             DOMAIN: {"old": 1, "new": 2, "services": ["nginx"]},
         },
     }
-    from clm_common.certificate import FILES
+    from clm_server.certificate import FILES
 
     version = client.files.directory(DOMAIN, 1)
     client.files.stage(DOMAIN, 2, {name: (version / name).read_bytes() for name in FILES})
@@ -379,7 +380,8 @@ def test_listener_accepts_inherited_unix_socket(server):
 
 
 def test_client_rejects_bundle_checksum_mismatch(server, installed):
-    from clm_common.certificate import make_bundle, unpack_bundle
+    from clm_client.certificate import unpack_bundle
+    from clm_server.certificate import make_bundle
 
     admin, _, _ = server
     client, remote, state = installed
@@ -396,3 +398,67 @@ def test_client_rejects_bundle_checksum_mismatch(server, installed):
         client.apply(state, [DOMAIN])
     assert client.files.current(DOMAIN) == 1
     assert not client.files.directory(DOMAIN, 2).exists()
+
+
+def test_server_cli_status_and_client_listing_keep_json_optional(server, caplog):
+    import json
+    import subprocess
+    import sys
+
+    admin, _, _ = server
+    admin.client_change("git", "add")
+    with caplog.at_level(logging.INFO, logger="clm"):
+        admin.client_change("git", "grant", WILDCARD)
+    assert "Looking up the public DNS challenge" in caplog.text
+    assert "Saving access for client git" in caplog.text
+    admin.repo.ensure(DOMAIN, "ec-256")
+    admin.event("issue", identifier=DOMAIN, detail="Missing public CNAME")
+    command = [
+        sys.executable,
+        "-c",
+        "from clm_server.cli import main; raise SystemExit(main())",
+        "--root",
+        str(admin.root),
+    ]
+
+    def run(*arguments):
+        return subprocess.run([*command, *arguments], check=True, capture_output=True, text=True)
+
+    text = run("status")
+    assert not text.stderr
+    assert WILDCARD in text.stdout
+    assert "Not issued" in text.stdout
+    assert "Missing public CNAME" in text.stdout
+    assert " UTC" in text.stdout
+    assert "certificates=[" not in text.stdout
+    structured = run("status", "--json")
+    assert not structured.stderr
+    report = json.loads(structured.stdout)
+    assert report["certificates"][0]["identifier"] == WILDCARD
+    assert report["repository_inconsistencies"] == []
+    client = run("client", "show", "git")
+    assert "- *.example.com" in client.stdout
+    assert "['" not in client.stdout
+    records = (admin.root / "logs/clm.log").read_text().splitlines()
+    assert all(json.loads(line).get("message") for line in records)
+
+
+def test_client_cli_status_supports_readable_and_json_output(installed, capsys):
+    import json
+
+    from clm_client.cli import arguments, dispatch
+
+    client, _, _ = installed
+    parser = arguments()
+    dispatch(parser.parse_args(["status"]), client)
+    stdout, stderr = capsys.readouterr()
+    assert DOMAIN in stdout
+    assert "Generation" in stdout
+    assert " UTC" in stdout
+    assert "- nginx" in stdout
+    assert "{" not in stdout
+    assert not stderr
+    dispatch(parser.parse_args(["status", "--json"]), client)
+    stdout, stderr = capsys.readouterr()
+    assert json.loads(stdout)["certificates"][0]["identifier"] == DOMAIN
+    assert not stderr

@@ -1038,7 +1038,6 @@ clm/
 ├── README.md
 ├── LICENSE
 ├── src/
-│   ├── clm_common/
 │   ├── clm_server/
 │   └── clm_client/
 ├── tests/
@@ -1054,9 +1053,7 @@ clm/
 └── docs/
 ```
 
-Share certificate validation, manifest handling, configuration validation and other genuinely common functionality.
-
-Avoid unnecessary coupling between server and client packages.
+Keep server and client source packages self-contained. The server can authorise multiple independent clients, each with its own credentials and certificate grants. Keep the API and certificate manifest formats compatible across the two applications.
 
 The client must not require server-only dependencies.
 

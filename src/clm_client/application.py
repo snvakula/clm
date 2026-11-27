@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from clm_common.certificate import (
+from .certificate import (
     MAX_FILE,
     PEMS,
     TRUST,
@@ -18,9 +18,10 @@ from clm_common.certificate import (
     utc,
     validate,
 )
-from clm_common.config import load_config
-from clm_common.filesystem import read_regular, write_atomic
-from clm_common.generations import Generations
+from .config import load_config
+from .filesystem import read_regular, write_atomic
+from .generations import Generations
+from .logging import progress
 
 from .profiles import Profiles
 from .remote import Remote, endpoint
@@ -77,6 +78,7 @@ class Client:
 
     def initialise(self, server: str, token: str) -> str:
         url = endpoint(server)
+        progress(self.logger, "Verifying the client token with the CLM server")
         name = self._remote(url, token).client()
         if (
             self.credentials.exists()
@@ -89,6 +91,7 @@ class Client:
 
     def _rollback(self, state: dict) -> None:
         pending = state["pending"]
+        progress(self.logger, "Restoring the previous certificate state")
         affected = set()
         # Reload conservatively even when a previous recovery already restored the links.
         if pending["switching"]:
@@ -176,6 +179,11 @@ class Client:
                 for name in services:
                     if name not in profiles:
                         profiles[name] = self.profiles.load(name)
+                progress(
+                    self.logger,
+                    "Checking the current generation of %s on the CLM server",
+                    identifier,
+                )
                 incoming = remote.manifest(identifier)
                 number = incoming["version"]
                 local_files = None
@@ -196,6 +204,7 @@ class Client:
                     if number < row["version"]:
                         raise ValueError(f"Server reported an older generation for {identifier}")
                     if local == incoming:
+                        progress(self.logger, "%s is already at generation %s", identifier, number)
                         registrations[identifier] = {**row, "services": services}
                         continue
                     if number == row["version"]:
@@ -203,11 +212,12 @@ class Client:
                             f"Installed generation requires local recovery for {identifier}"
                         )
                     copied = local is not None and {**local, "version": number} == incoming
-                archive = (
-                    {**local_files, "manifest.json": json_bytes(incoming)}
-                    if copied
-                    else unpack_bundle(remote.bundle(identifier, number))
-                )
+                if copied:
+                    archive = {**local_files, "manifest.json": json_bytes(incoming)}
+                else:
+                    progress(self.logger, "Downloading generation %s for %s", number, identifier)
+                    archive = unpack_bundle(remote.bundle(identifier, number))
+                progress(self.logger, "Validating the certificate and key for %s", identifier)
                 bundled = parse_manifest(archive["manifest.json"], identifier)
                 material = {name: archive[name] for name in PEMS}
                 verified = validate(identifier, number, material, self.root / "run", self.trust)
@@ -232,6 +242,9 @@ class Client:
                 pending["switching"] = True
                 self.save(state)
                 for identifier, change in pending["changes"].items():
+                    progress(
+                        self.logger, "Activating generation %s for %s", change["new"], identifier
+                    )
                     self.files.activate(identifier, change["new"])
                 affected = sorted(
                     {name for change in pending["changes"].values() for name in change["services"]}

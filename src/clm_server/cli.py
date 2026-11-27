@@ -1,7 +1,7 @@
 """CLM administrative command line."""
 
 import argparse
-import json
+import logging
 import os
 import signal
 import sqlite3
@@ -9,9 +9,11 @@ import sys
 from importlib.metadata import version
 from pathlib import Path
 
-from clm_common.identity import normalise_identifier
-from clm_common.locking import exclusive_lock, publication_lock
-from clm_common.logging import configure_logging
+from . import __version__
+from .identity import normalise_identifier
+from .locking import exclusive_lock, publication_lock
+from .logging import configure_logging, progress
+from .output import display
 
 from .acme import LENGTHS
 from .service import Administration
@@ -56,20 +58,10 @@ def parser() -> argparse.ArgumentParser:
     return cli
 
 
-def output(value, machine: bool = False) -> None:
-    if machine:
-        print(json.dumps(value, indent=2, sort_keys=True))
-    elif isinstance(value, list):
-        for row in value:
-            output(row)
-    elif isinstance(value, dict):
-        print("  ".join(f"{key}={value}" for key, value in value.items() if value is not None))
-    else:
-        print(value)
-
-
 def check(admin: Administration) -> None:
     root = admin.root
+    logger = logging.getLogger("clm")
+    progress(logger, "Checking configuration and AWS account settings")
     engine = admin.engine()
     for account in engine.route.accounts:
         engine.route.credentials(account)
@@ -83,12 +75,14 @@ def check(admin: Administration) -> None:
     ):
         if path.is_symlink() or path.stat().st_mode & mask:
             raise ValueError(f"Unsafe permissions on {path}")
+    progress(logger, "Checking database integrity")
     with admin.db.connect() as connection:
         if (
             connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
             or connection.execute("PRAGMA foreign_key_check").fetchone()
         ):
             raise ValueError("Database integrity check failed")
+    progress(logger, "Checking the published certificate repository")
     with exclusive_lock(admin.operations), publication_lock(admin.repo.lock, write=True):
         admin.repo.reconcile()
         for row in admin.db.all("SELECT * FROM certificates WHERE status='active'"):
@@ -108,18 +102,22 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                 cli.error("Specify one DNS identifier or --all")
             if args.all:
                 failed = False
-                for row in admin.db.all(
+                rows = admin.db.all(
                     """SELECT identifier FROM certificates WHERE status='pending'
                        OR (status='active' AND account IS NOT NULL) ORDER BY identifier"""
-                ):
+                )
+                if not rows:
+                    display("No certificates configured for renewal")
+                for row in rows:
                     try:
-                        output(admin.obtain(row["identifier"], action, force=args.force))
+                        number = admin.obtain(row["identifier"], action, force=args.force)
+                        display(f"{row['identifier']} is at generation {number}")
                     except ValueError as exc:
                         print(f"{row['identifier']}: {exc}", file=sys.stderr)
                         failed = True
                 return int(failed)
         if action == "list":
-            output(
+            display(
                 admin.db.all(
                     "SELECT * FROM certificates WHERE status<>'deleted' ORDER BY identifier"
                 ),
@@ -131,13 +129,16 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
             row = admin.repo.certificate(identifier)
             if not row or row["status"] == "deleted":
                 raise ValueError("Unknown certificate")
-            output(row, args.json)
+            display(row, args.json)
         elif action == "import":
-            output(admin.import_certificate(identifier, args.directory))
+            number = admin.import_certificate(identifier, args.directory)
+            display(f"Imported {identifier} as generation {number}")
         elif action == "revoke":
             admin.revoke(identifier)
+            display(f"Revoked {identifier}")
         elif action == "delete":
             admin.delete(identifier, force=args.force)
+            display(f"Deleted {identifier}")
         else:
             number = admin.obtain(
                 identifier,
@@ -145,12 +146,12 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                 algorithm=getattr(args, "key", None),
                 force=getattr(args, "force", False),
             )
-            output(f"{identifier} generation {number}")
+            display(f"{identifier} generation {number}")
     elif args.group == "client":
         if action in ("list", "show"):
             columns = "id, name, enabled, created, last_authentication, last_download"
             if action == "list":
-                output(admin.db.all(f"SELECT {columns} FROM clients ORDER BY name"), args.json)
+                display(admin.db.all(f"SELECT {columns} FROM clients ORDER BY name"), args.json)
             else:
                 row = admin.db.one(f"SELECT {columns} FROM clients WHERE name=?", (args.subject,))
                 if row is None:
@@ -162,14 +163,22 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                         (row["id"],),
                     )
                 ]
-                output(row, args.json)
+                display(row, args.json)
         else:
             identifier = (
                 normalise_identifier(args.identifier) if action in ("grant", "deny") else None
             )
             token = admin.client_change(args.subject, action, identifier)
             if token:
+                # Keep the token as the sole stdout value for provisioning scripts.
                 print(token)
+            elif action == "grant":
+                display(f"Granted {args.subject} access to {identifier}")
+            elif action == "deny":
+                display(f"Removed {args.subject}'s access to {identifier}")
+            else:
+                verbs = {"disable": "Disabled", "enable": "Enabled", "delete": "Deleted"}
+                display(f"{verbs[action]} client {args.subject}")
     elif action == "status":
         with publication_lock(admin.repo.lock, write=False):
             certificates = admin.db.all(
@@ -183,7 +192,7 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                         inconsistent.append(row["identifier"])
                 except (OSError, ValueError):
                     inconsistent.append(row["identifier"])
-            output(
+            display(
                 {"certificates": certificates, "repository_inconsistencies": inconsistent},
                 args.json,
             )
@@ -203,10 +212,10 @@ def main() -> int:
     cli = parser()
     args = cli.parse_args()
     if args.group == "version":
-        print(version("clm"))
+        print(__version__ or version("clm"))
         return 0
     admin = Administration(args.root.resolve())
-    logger = configure_logging(admin.root / "logs", "clm")
+    logger = configure_logging(admin.root / "logs", "clm", terminal=True)
     try:
         result = dispatch(admin, args, cli)
     except (OSError, ValueError, sqlite3.Error) as exc:

@@ -4,10 +4,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from clm_common.certificate import KEYS, MAX_FILE, TRUST, json_bytes, parse_manifest, validate
-from clm_common.filesystem import read_regular
-from clm_common.generations import Generations
-from clm_common.identity import storage_id
+from .certificate import KEYS, MAX_FILE, TRUST, json_bytes, parse_manifest, validate
+from .filesystem import read_regular
+from .generations import Generations
+from .identity import storage_id
 
 from .database import Database, audit, now
 

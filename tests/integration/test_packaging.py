@@ -220,7 +220,7 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
             config / "aws/credentials": 0o600,
             site: 0o644,
         }
-        from clm_common.config import load_config
+        from clm_server.config import load_config
 
         assert load_config(config / "route53.yaml") == {"accounts": {}, "challenge_aliases": {}}
         assert "#     credentials_profile: secondary" in (config / "route53.yaml").read_text()
@@ -276,7 +276,7 @@ def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
     (old_venv / "pyvenv.cfg").touch()
     (root / "venv/pyvenv.cfg").write_text("standard virtual environment")
     (workspace / "application").mkdir(parents=True)
-    (workspace / "application/clm_common").mkdir()
+    (workspace / "application/clm_server").mkdir()
     engine = root / "acme/engines" / f"{'b' * 40}-{old_release}"
     engine.mkdir(parents=True)
     (engine / "acme.sh").touch()
@@ -301,9 +301,46 @@ def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
         str(workspace),
     ]
     subprocess.run(command, check=True)
-    assert (root / "app/clm_common").is_dir()
-    assert sorted(path.name for path in (root / "app").iterdir()) == ["clm_common"]
+    assert (root / "app/clm_server").is_dir()
+    assert sorted(path.name for path in (root / "app").iterdir()) == ["clm_server"]
     assert sorted(path.name for path in (root / "venv").iterdir()) == ["pyvenv.cfg"]
     assert sorted(path.name for path in (root / "acme").iterdir()) == ["acme.sh", "instances"]
     for name, contents in protected.items():
         assert (root / name).read_text() == contents
+
+
+@pytest.mark.parametrize(
+    ("role", "commands"),
+    [("server", {"clm", "clmd"}), ("client", {"clm-client"})],
+)
+def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, commands):
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/stage-application.py"),
+            str(ROOT),
+            role,
+            str(tmp_path),
+            sys.executable,
+        ],
+        check=True,
+    )
+    app = tmp_path / "application"
+    assert {entry.name for entry in app.iterdir()} == {f"clm_{role}"}
+    assert {entry.name for entry in (tmp_path / "bin").iterdir()} == commands
+    for name in commands:
+        args = ["--help"] if name == "clmd" else ["version"]
+        result = subprocess.run(
+            [sys.executable, str(tmp_path / "bin" / name), *args],
+            env={**os.environ, "PYTHONPATH": str(app)},
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=tmp_path,
+        )
+        assert result.stdout
+        if name != "clmd":
+            import tomllib
+
+            metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
+            assert result.stdout.strip() == metadata["project"]["version"]

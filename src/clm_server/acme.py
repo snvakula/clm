@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from clm_common.certificate import PEMS, read_material
+from .certificate import PEMS, read_material
 
 from .dns_records import entry
 from .route53 import Route53, Target

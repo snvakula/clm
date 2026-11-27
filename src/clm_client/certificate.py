@@ -1,4 +1,4 @@
-"""Certificate, manifest and bounded bundle validation."""
+"""Validate downloaded certificates, manifests and bundles."""
 
 import hashlib
 import io
@@ -210,14 +210,6 @@ def parse_manifest(data: bytes, identifier: str) -> dict[str, Any]:
     ):
         raise ValueError("Invalid certificate manifest")
     return value
-
-
-def make_bundle(material: dict[str, bytes], manifest: bytes) -> bytes:
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
-        for name, data in {**material, "manifest.json": manifest}.items():
-            archive.writestr(name, data)
-    return output.getvalue()
 
 
 def unpack_bundle(data: bytes) -> dict[str, bytes]:

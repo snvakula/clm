@@ -15,9 +15,9 @@ from threading import Lock
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 
-from clm_common.certificate import checksums, make_bundle, read_material
-from clm_common.locking import publication_lock
-from clm_common.logging import configure_logging
+from .certificate import checksums, make_bundle, read_material
+from .locking import publication_lock
+from .logging import configure_logging
 
 from .database import audit, now
 from .repository import Repository

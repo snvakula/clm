@@ -7,18 +7,10 @@ stage_application() {
         python3 -m venv "$environment"
     fi
     "$environment/bin/python" -m pip --disable-pip-version-check install \
-        --require-hashes -r "$sources/packaging/requirements/$product.txt" \
-        -r "$sources/packaging/requirements/build.txt"
-
-    mkdir -p -- "$workspace/source/src" "$workspace/application"
-    cp -- "$sources/pyproject.toml" "$workspace/source/"
-    (
-        cd -- "$sources" || exit 1
-        find src -type f -name '*.py' -exec cp --parents -t "$workspace/source" -- {} +
-    )
-    "$environment/bin/python" -m pip --disable-pip-version-check install --no-deps \
-        --no-build-isolation --target "$workspace/application" "$workspace/source"
-    PYTHONPATH="$workspace/application" "$environment/bin/python" -m pip check
+        --require-hashes -r "$sources/packaging/requirements/$product.txt"
+    "$environment/bin/python" "$sources/scripts/stage-application.py" \
+        "$sources" "$product" "$workspace" "$environment/bin/python"
+    "$environment/bin/python" -m pip check
 
     site_packages=$("$environment/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
     printf '%s\n' "$root/app" > "$workspace/clm-application.pth"

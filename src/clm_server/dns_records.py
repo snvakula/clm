@@ -12,8 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from clm_common.certificate import json_bytes
-from clm_common.filesystem import read_regular, sync_directory, write_atomic
+from .certificate import json_bytes
+from .filesystem import read_regular, sync_directory, write_atomic
 
 from .route53 import ZONE, NoRedirect, dns_name, public_nameservers
 

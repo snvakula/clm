@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from clm_common.certificate import utc
+from .certificate import utc
 
 SCHEMA = """
 CREATE TABLE certificates (

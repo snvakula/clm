@@ -1,6 +1,9 @@
 import pytest
 
-from clm_common.identity import normalise_identifier, storage_id
+from clm_client import identity as client_identity
+from clm_server import identity as server_identity
+
+pytestmark = pytest.mark.parametrize("identity", [server_identity, client_identity])
 
 
 @pytest.mark.parametrize(
@@ -11,15 +14,15 @@ from clm_common.identity import normalise_identifier, storage_id
         ("bücher.example", "xn--bcher-kva.example"),
     ],
 )
-def test_normalisation(source, expected):
-    assert normalise_identifier(source) == expected
+def test_normalisation(identity, source, expected):
+    assert identity.normalise_identifier(source) == expected
 
 
 @pytest.mark.parametrize("source", ["", " example.com", "a.*.example.com", "*", "127.0.0.1"])
-def test_invalid(source):
+def test_invalid(identity, source):
     with pytest.raises(ValueError):
-        normalise_identifier(source)
+        identity.normalise_identifier(source)
 
 
-def test_distinct_identifiers():
-    assert storage_id("*.example.com") != storage_id("wildcard.example.com")
+def test_distinct_identifiers(identity):
+    assert identity.storage_id("*.example.com") != identity.storage_id("wildcard.example.com")
