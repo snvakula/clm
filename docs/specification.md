@@ -720,6 +720,7 @@ An update lists all certificates assigned to this client's token and synchronise
 ## 15. Client certificate storage
 
 Use the same versioned generation model as the server.
+Install the top-level client certificate directory with mode `0750`.
 
 ```text
 /opt/clm-client/certificates/

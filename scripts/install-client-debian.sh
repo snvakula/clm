@@ -7,6 +7,12 @@ keep_configuration() {
     fi
 }
 
+install_client_storage() {
+    local root=$1
+    install -d -m 0750 "$root/certificates"
+    install -d -m 0700 "$root/data" "$root/logs"
+}
+
 install_client_configuration() {
     local sources=$1 config=$2
     local hook="$config/hooks.d/restart-web-servers"
@@ -165,10 +171,10 @@ install_client() {
     workspace=$(mktemp -d "$root/run/install.XXXXXXXX")
     trap 'rm -rf -- "$workspace"' EXIT
 
-    install -d -m 0700 "$root/certificates" "$root/data" "$root/logs"
     keep_configuration 0600 /dev/null "$root/run/update.lock"
     exec 8<>"$root/run/update.lock"
     flock -x 8
+    install_client_storage "$root"
     install_client_configuration "$sources" "$root/config"
     prepare_client_environment "$sources" "$root" "$workspace"
     install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client

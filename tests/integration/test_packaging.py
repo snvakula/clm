@@ -363,6 +363,36 @@ def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, c
             assert result.stdout.strip() == metadata["project"]["version"]
 
 
+def test_client_certificate_directory_permissions_on_install_and_upgrade(tmp_path):
+    command = [
+        "bash",
+        "-euc",
+        'source "$1"; umask 077; install_client_storage "$2"',
+        "test",
+        str(ROOT / "scripts/install-client-debian.sh"),
+        str(tmp_path),
+    ]
+    certificates = tmp_path / "certificates"
+    subprocess.run(command, check=True)
+    assert certificates.stat().st_mode & 0o777 == 0o750
+
+    certificates.chmod(0o700)
+    generation = certificates / "generation"
+    generation.mkdir(mode=0o700)
+    key = generation / "privkey.pem"
+    key.write_text("test key")
+    key.chmod(0o600)
+
+    for _ in range(2):
+        subprocess.run(command, check=True)
+        assert certificates.stat().st_mode & 0o777 == 0o750
+        assert (tmp_path / "data").stat().st_mode & 0o777 == 0o700
+        assert (tmp_path / "logs").stat().st_mode & 0o777 == 0o700
+        assert generation.stat().st_mode & 0o777 == 0o700
+        assert key.stat().st_mode & 0o777 == 0o600
+        assert key.read_text() == "test key"
+
+
 def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path):
     root = tmp_path / "clm-client"
     workspace = tmp_path / "stage"
