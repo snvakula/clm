@@ -218,13 +218,13 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
             config / "clm.yaml": 0o600,
             config / "route53.yaml": 0o600,
             config / "aws/credentials": 0o600,
-            config / "aws/config": 0o600,
             site: 0o644,
         }
         from clm_common.config import load_config
 
         assert load_config(config / "route53.yaml") == {"accounts": {}, "challenge_aliases": {}}
-        assert "#     hosted_zone_id:" in (config / "route53.yaml").read_text()
+        assert "#     credentials_profile: secondary" in (config / "route53.yaml").read_text()
+        assert not (config / "aws/config").exists()
         assert "aws_secret_access_key =" in (config / "aws/credentials").read_text()
     else:
         expected = {config / "client.yaml": 0o600, config / "services.d/nginx.yaml": 0o600}
@@ -238,3 +238,72 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
     subprocess.run(command, check=True)
     for path in expected:
         assert path.read_text() == "operator configuration\n"
+
+
+def test_installer_refreshes_untouched_legacy_aws_configuration(tmp_path):
+    config = tmp_path / "config"
+    (config / "aws").mkdir(parents=True)
+    (config / "aws/config").touch()
+    (config / "route53.yaml").write_text("accounts: {}\nchallenge_aliases: {}\n")
+    command = [
+        "bash",
+        "-euc",
+        'source "$1"; install_server_configuration "$2" "$3" "$4"',
+        "test",
+        str(ROOT / "scripts/install-configuration.sh"),
+        str(ROOT),
+        str(config),
+        str(tmp_path / "nginx-site"),
+    ]
+    subprocess.run(command, check=True)
+    assert (config / "route53.yaml").read_bytes() == (ROOT / "packaging/route53.yaml").read_bytes()
+    assert not (config / "aws/config").exists()
+    (config / "aws/config").write_text("[profile local]\n")
+    subprocess.run(command, check=True)
+    assert (config / "aws/config").read_text() == "[profile local]\n"
+
+
+def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
+    root = tmp_path / "clm"
+    workspace = root / "run/install"
+    old_release = "a" * 64
+    old_app = root / "app/releases" / old_release
+    old_app.mkdir(parents=True)
+    (root / "app/current").symlink_to(old_app)
+    (root / "app/previous").symlink_to(old_app)
+    old_venv = root / "venv" / old_release
+    old_venv.mkdir(parents=True)
+    (old_venv / "pyvenv.cfg").touch()
+    (root / "venv/pyvenv.cfg").write_text("standard virtual environment")
+    (workspace / "application").mkdir(parents=True)
+    (workspace / "application/clm_common").mkdir()
+    engine = root / "acme/engines" / f"{'b' * 40}-{old_release}"
+    engine.mkdir(parents=True)
+    (engine / "acme.sh").touch()
+    (root / "acme/engine").symlink_to(engine)
+    (root / "acme/acme.sh").write_text("flat executable")
+    protected = {
+        "data/certificates/primary.pem": "existing certificate",
+        "config/aws/credentials": "existing credentials",
+        "acme/instances/primary/config/account.key": "existing account key",
+    }
+    for name, contents in protected.items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents)
+    command = [
+        "bash",
+        "-euc",
+        'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout server "$2"',
+        "test",
+        str(ROOT / "scripts/install-layout.sh"),
+        str(root),
+        str(workspace),
+    ]
+    subprocess.run(command, check=True)
+    assert (root / "app/clm_common").is_dir()
+    assert sorted(path.name for path in (root / "app").iterdir()) == ["clm_common"]
+    assert sorted(path.name for path in (root / "venv").iterdir()) == ["pyvenv.cfg"]
+    assert sorted(path.name for path in (root / "acme").iterdir()) == ["acme.sh", "instances"]
+    for name, contents in protected.items():
+        assert (root / name).read_text() == contents

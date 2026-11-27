@@ -1,14 +1,22 @@
-# Add each AWS account and its credentials profile under accounts.
-# Add each public challenge alias and its hosted zone under challenge_aliases.
-# Replace the empty mappings below with your settings, using this layout:
+# Add each AWS account under accounts. The credentials_profile must match
+# a section in aws/credentials. Map each challenge alias to its account and
+# public hosted zone. The layout for two AWS accounts is:
 #
 # accounts:
 #   primary:
 #     credentials_profile: primary
+#   secondary:
+#     credentials_profile: secondary
 # challenge_aliases:
 #   acme.example.com:
 #     account: primary
 #     hosted_zone_id: ZXXXXXXXXXXXXX
+#   acme.example.org:
+#     account: secondary
+#     hosted_zone_id: ZYYYYYYYYYYYYY
+#
+# The active values below are empty YAML mappings. Replace them with the
+# actual accounts and aliases for your deployment.
 
 accounts: {}
 challenge_aliases: {}

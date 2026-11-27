@@ -12,7 +12,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now clm-client-update.timer
 ```
 
-The installer writes the active settings to `/opt/clm-client/config/client.yaml` and the Nginx profile to `/opt/clm-client/config/services.d/nginx.yaml`. The CLM administrator must provide a token for this client over a protected channel. The interactive prompt does not echo it. Automated provisioning can use `--credentials-file /path/to/protected/token` or `--token-stdin`. A credentials file must be readable only by its owner. The credential is verified through HTTPS before CLM saves it under `/opt/clm-client/config/credentials`. Rerun `init` after an administrator rotates the token.
+The installer places the application and its single Python virtual environment in `/opt/clm-client/app` and `/opt/clm-client/venv`. It writes the active settings to `/opt/clm-client/config/client.yaml` and the Nginx profile to `/opt/clm-client/config/services.d/nginx.yaml`. The CLM administrator must provide a token for this client over a protected channel. The interactive prompt does not echo it. Automated provisioning can use `--credentials-file /path/to/protected/token` or `--token-stdin`. A credentials file must be readable only by its owner. The credential is verified through HTTPS before CLM saves it under `/opt/clm-client/config/credentials`. Rerun `init` after an administrator rotates the token.
 
 ## Install and use a certificate
 

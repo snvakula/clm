@@ -10,7 +10,7 @@ Run the installer as root from the reviewed checkout.
 sudo ./scripts/install-server.sh
 ```
 
-The installer places the working configuration in `/opt/clm/config/`. Edit `clm.yaml` for the ACME account email, `route53.yaml` for accounts and aliases, and `aws/credentials` for the matching AWS profiles. The Route 53 file includes the mapping layout in comments. Re-running the installer preserves your files.
+The installer places the working configuration in `/opt/clm/config/`. Edit `clm.yaml` for the ACME account contact email, `route53.yaml` for accounts and aliases, and `aws/credentials` for the matching AWS profiles. The Route 53 file includes the mapping layout for two AWS accounts in comments. Re-running the installer preserves configured files.
 
 Edit `/etc/nginx/sites-available/clm`. Set `server_name`, TLS paths and explicit IPv4 and IPv6 network allow rules before `deny all`. Apply corresponding firewall rules. Enable the site using a link in `/etc/nginx/sites-enabled/`, then run `nginx -t` and `systemctl reload nginx`. Use a trusted independent TLS certificate to bootstrap the endpoint. Debian's default Nginx site can be disabled if this host does not serve it.
 
@@ -23,9 +23,11 @@ sudo systemctl enable --now clmd.socket clm-renew.timer
 
 The socket at `/opt/clm/run/clmd.sock` is accessible to the standard Debian Nginx group `www-data`. There is no application TCP listener.
 
+The installed Python application is in `/opt/clm/app`. The Python interpreter and dependencies use a single standard virtual environment at `/opt/clm/venv`. The shared acme.sh executable is at `/opt/clm/acme/acme.sh`, and each AWS account keeps its own working state under `/opt/clm/acme/instances/`.
+
 ## Configure Route 53 and ACME
 
-Set the operator contact email in `/opt/clm/config/clm.yaml`. Fill in `/opt/clm/config/route53.yaml` using the [two-account example](../examples/server/route53.yaml). Each account has one unique static credentials profile. Each configured alias maps to a single account and public hosted zone. Several aliases can refer to the same account or zone.
+Set the operator contact email in `/opt/clm/config/clm.yaml`. CLM passes its only setting, `account_email`, to acme.sh as the contact for the Let’s Encrypt account. Fill in `/opt/clm/config/route53.yaml` using the [two-account example](../examples/server/route53.yaml). Each account has one unique static credentials profile. Each configured alias maps to a single account and public hosted zone. Several aliases can refer to the same account or zone. The initial `{}` values are empty YAML mappings. Replace them with your account and alias mappings.
 
 Enter the access key ID and secret in `/opt/clm/config/aws/credentials` using the [profile example](../examples/server/credentials). Set `aws_session_token` for temporary AWS credentials and replace the credentials before they expire. Keep the directory private and credentials mode `0600`. Use narrowly scoped IAM permissions per account and hosted zone. The [IAM example](../examples/server/iam-policy.json) grants reads on one hosted zone and permits atomic `CREATE` and `DELETE` operations only at one named TXT endpoint. Repeat the scoped policy for additional endpoints. Protect shared challenge endpoints from other automatic writers.
 

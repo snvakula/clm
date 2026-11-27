@@ -36,7 +36,7 @@ if [[ -L $root || (-e $root && $(stat -c %u -- "$root") != 0) ]]; then
     echo 'The application directory must be owned by root and may not be a symbolic link.' >&2
     exit 1
 fi
-install -d -m 0755 "$root" "$root/bin" "$root/app" "$root/app/releases" "$root/venv"
+install -d -m 0755 "$root" "$root/bin" "$root/venv"
 install -d -m 0711 "$root/run"
 install -d -m 0700 "$root/config"
 exec 9>"$root/run/install.lock"
@@ -57,6 +57,8 @@ switch_link() {
 
 # shellcheck source=/dev/null
 . "$sources/scripts/install-configuration.sh"
+# shellcheck source=/dev/null
+. "$sources/scripts/install-layout.sh"
 
 if [[ $product == server ]]; then
     getent group clm-api >/dev/null || groupadd --system clm-api
@@ -67,7 +69,7 @@ if [[ $product == server ]]; then
     fi
     install -d -m 3770 -o root -g clm-api "$root/data"
     install -d -m 2750 -o root -g clm-api "$root/data/certificates" "$root/logs"
-    install -d -m 0700 "$root/acme" "$root/acme/instances" "$root/acme/engines"
+    install -d -m 0700 "$root/acme" "$root/acme/instances"
     install_server_configuration "$sources" "$root/config" /etc/nginx/sites-available/clm
     keep_file 0640 clm-api /dev/null "$root/run/publication.lock"
     keep_file 0600 root /dev/null "$root/run/operations.lock"
@@ -78,18 +80,19 @@ if [[ $product == server ]]; then
     fi
 
     revision=5567d7fe7298fd37aca53194885ba444c6678669
-    engine_id=$(sha256sum "$sources/packaging/acme/dns-aws.patch"         "$sources/packaging/acme/recover-dns.sh" | cut -d ' ' -f1 | sha256sum | cut -d ' ' -f1)
-    engine="$root/acme/engines/${revision}-${engine_id}"
-    if [[ ! -d $engine ]]; then
-        curl --disable --fail --silent --show-error --location --proto '=https'             --proto-redir '=https' --max-time 120             "https://codeload.github.com/acmesh-official/acme.sh/tar.gz/$revision"             --output "$workspace/acme.tar.gz"
-        printf '%s  %s\n'             22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc             "$workspace/acme.tar.gz" | sha256sum --check --status
-        mkdir "$workspace/engine"
-        tar -xf "$workspace/acme.tar.gz" -C "$workspace/engine" --strip-components=1             "acme.sh-$revision/acme.sh" "acme.sh-$revision/dnsapi/dns_aws.sh" "acme.sh-$revision/LICENSE.md"
-        patch --batch --fuzz=0 -d "$workspace/engine" -p1 < "$sources/packaging/acme/dns-aws.patch"
-        install -m 0700 "$sources/packaging/acme/recover-dns.sh" "$workspace/engine/recover-dns.sh"
-        "$workspace/engine/acme.sh" --version >/dev/null
-        mv -T -- "$workspace/engine" "$engine"
-    fi
+    mkdir -- "$workspace/acme"
+    curl --disable --fail --silent --show-error --location --proto '=https' \
+        --proto-redir '=https' --max-time 120 \
+        "https://codeload.github.com/acmesh-official/acme.sh/tar.gz/$revision" \
+        --output "$workspace/acme.tar.gz"
+    printf '%s  %s\n' \
+        22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc \
+        "$workspace/acme.tar.gz" | sha256sum --check --status
+    tar -xf "$workspace/acme.tar.gz" -C "$workspace/acme" --strip-components=1 \
+        "acme.sh-$revision/acme.sh" "acme.sh-$revision/dnsapi/dns_aws.sh" "acme.sh-$revision/LICENSE.md"
+    patch --batch --fuzz=0 -d "$workspace/acme" -p1 < "$sources/packaging/acme/dns-aws.patch"
+    install -m 0700 "$sources/packaging/acme/recover-dns.sh" "$workspace/acme/recover-dns.sh"
+    "$workspace/acme/acme.sh" --version >/dev/null
 else
     install -d -m 0700 "$root/certificates" "$root/data" "$root/logs"
     keep_file 0600 root /dev/null "$root/run/update.lock"
@@ -98,47 +101,13 @@ else
     install_client_configuration "$sources" "$root/config"
 fi
 
-release=$(
-    cd -- "$sources"
-    {
-        find src -type f -name '*.py' -print0 | sort -z | xargs -0 sha256sum
-        sha256sum pyproject.toml "packaging/requirements/$product.txt" packaging/requirements/build.txt
-        python3 --version
-    } | sha256sum | cut -d ' ' -f1
-)
-environment="$root/venv/$release"
-application="$root/app/releases/$release"
-if [[ ! -f $application/.ready ]]; then
-    rm -rf -- "$environment" "$application"
-    mkdir -p "$workspace/source/src" "$workspace/application"
-    cp -- "$sources/pyproject.toml" "$workspace/source/"
-    (
-        cd -- "$sources"
-        find src -type f -name '*.py' -exec cp --parents -t "$workspace/source" -- {} +
-    )
-    python3 -m venv "$environment"
-    "$environment/bin/python" -m pip --disable-pip-version-check install \
-        --require-hashes -r "$sources/packaging/requirements/$product.txt" \
-        -r "$sources/packaging/requirements/build.txt"
-    "$environment/bin/python" -m pip --disable-pip-version-check install --no-deps         --no-build-isolation "$workspace/source"
-    "$environment/bin/python" -m pip check
-    ln -s -- "$environment/bin/$program" "$workspace/application/$program"
-    if [[ $product == server ]]; then
-        ln -s -- "$environment/bin/clmd" "$workspace/application/clmd"
-    fi
-    chmod 0755 "$workspace/application"
-    # The API identity needs read/execute access to the installed code.
-    chmod -R a+rX -- "$environment"
-    chmod 0755 "$environment"
-    touch "$workspace/application/.ready"
-    mv -T -- "$workspace/application" "$application"
-fi
+stage_application "$sources" "$product" "$root" "$workspace"
+environment="$root/venv"
 
-previous=$(readlink "$root/app/current" || :)
 if [[ $product == server ]]; then
     # SQLite derives its WAL and shared-memory permissions from the database mode.
     keep_file 0660 clm-api /dev/null "$root/data/clm.db"
-    "$environment/bin/python" - "$root/data/clm.db" <<'PY'
+    PYTHONPATH="$workspace/application" "$environment/bin/python" - "$root/data/clm.db" <<'PY'
 import sys
 from pathlib import Path
 from clm_server.database import Database
@@ -156,25 +125,20 @@ for unit in "${units[@]}"; do
     install -m 0644 "$sources/packaging/systemd/$unit" /etc/systemd/system/
 done
 install -m 0644 "$sources/packaging/logrotate/$program" /etc/logrotate.d/"$program"
-switch_link "$root/bin/$program" "$root/app/current/$program"
+if [[ $product == server ]]; then
+    install -d -m 0700 "$root/acme/dnsapi"
+    install -m 0700 -- "$workspace/acme/acme.sh" "$workspace/acme/recover-dns.sh" "$root/acme/"
+    install -m 0600 -- "$workspace/acme/LICENSE.md" "$root/acme/"
+    install -m 0600 -- "$workspace/acme/dnsapi/dns_aws.sh" "$root/acme/dnsapi/"
+fi
+publish_application "$root/app" "$workspace"
+switch_link "$root/bin/$program" "$root/app/bin/$program"
 switch_link "/usr/local/bin/$program" "$root/bin/$program"
 if [[ $product == server ]]; then
-    switch_link "$root/bin/clmd" "$root/app/current/clmd"
+    switch_link "$root/bin/clmd" "$root/app/bin/clmd"
     switch_link /usr/local/bin/clmd "$root/bin/clmd"
-    switch_link "$root/acme/engine" "$engine"
 fi
-switch_link "$root/app/current" "releases/$release"
-
-if [[ -n $previous && $previous != "releases/$release" ]]; then
-    switch_link "$root/app/previous" "$previous"
-fi
-retained=$(readlink "$root/app/previous" || :)
-for candidate in "$root/app/releases/"*; do
-    name=${candidate##*/}
-    if [[ $name =~ ^[a-f0-9]{64}$ && $name != "$release" && releases/$name != "$retained" ]]; then
-        rm -rf -- "$candidate" "$root/venv/$name"
-    fi
-done
+remove_legacy_layout "$product" "$root"
 printf 'Installed %s under %s. Configuration directory %s/config.\n' "$program" "$root" "$root"
 if [[ $product == server ]]; then
     echo 'Nginx site configuration is at /etc/nginx/sites-available/clm.'
