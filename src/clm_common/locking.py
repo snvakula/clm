@@ -18,3 +18,17 @@ def exclusive_lock(path: Path) -> Iterator[None]:
         yield
     finally:
         os.close(fd)
+
+
+@contextmanager
+def publication_lock(path: Path, *, write: bool) -> Iterator[None]:
+    """Share a pre-created lock with the read-only certificate repository group."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o037:
+            raise PermissionError("Unsafe publication lock file")
+        fcntl.flock(fd, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+        yield
+    finally:
+        os.close(fd)
