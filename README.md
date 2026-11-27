@@ -4,7 +4,7 @@ CLM centralises publicly trusted TLS certificate issuance and renewal on Debian 
 
 - `clm` is the local administrative CLI. It uses SQLite, an immutable certificate repository and one isolated acme.sh instance per AWS account.
 - `clmd` is the distribution API. Nginx terminates HTTPS and forwards requests to the API through a Unix socket.
-- `clm-client` installs and updates certificates through stable paths and rolls back if a local service check or reload fails.
+- `clm-client` for Debian installs and updates certificates through stable paths and rolls back if a local service check or reload fails.
 
 CLM uses Let's Encrypt production and Route 53 DNS-01. It uses a pinned acme.sh release with a reviewed `dns_aws` patch that restricts writes to the configured public hosted zone and preserves unrelated TXT values.
 

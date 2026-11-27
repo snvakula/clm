@@ -1039,7 +1039,7 @@ clm/
 ├── LICENSE
 ├── src/
 │   ├── clm_server/
-│   └── clm_client/
+│   └── clm_client_debian/
 ├── tests/
 │   ├── unit/
 │   └── integration/

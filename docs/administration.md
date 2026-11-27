@@ -23,7 +23,7 @@ sudo systemctl enable --now clmd.socket clm-renew.timer
 
 The socket at `/opt/clm/run/clmd.sock` is accessible to the standard Debian Nginx group `www-data`. There is no application TCP listener.
 
-The installed server package is in `/opt/clm/app/clm_server`. The Python interpreter and dependencies use a single standard virtual environment at `/opt/clm/venv`. The shared acme.sh executable is at `/opt/clm/acme/acme.sh`, and each AWS account keeps its own working state under `/opt/clm/acme/instances/`.
+The installed server package is in `/opt/clm/app`. The Python interpreter and dependencies use a single standard virtual environment at `/opt/clm/venv`. The shared acme.sh executable is at `/opt/clm/acme/acme.sh`, and each AWS account keeps its own working state under `/opt/clm/acme/instances/`.
 
 ## Configure Route 53 and ACME
 

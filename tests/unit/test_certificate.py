@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from cryptography import x509
 
-from clm_client.certificate import unpack_bundle
+from clm_client_debian.certificate import unpack_bundle
 from clm_server.certificate import (
     json_bytes,
     make_bundle,

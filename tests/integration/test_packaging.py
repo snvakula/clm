@@ -13,7 +13,9 @@ TARBALL_SHA256 = "22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682
 
 
 def test_scripts_and_timer_parameters():
-    for path in (ROOT / "scripts").glob("*.sh"):
+    scripts = ROOT / "scripts"
+    assert {path.name for path in scripts.iterdir()} == {"install-server.sh", "install-client.sh"}
+    for path in scripts.glob("*.sh"):
         subprocess.run(["bash", "-n", str(path)], check=True)
     units = ROOT / "packaging/systemd"
     schedules = {
@@ -38,11 +40,28 @@ def test_scripts_and_timer_parameters():
     assert "RestrictAddressFamilies=AF_UNIX" in api
 
 
+def stage_files(directory, role):
+    subprocess.run(
+        [
+            "bash",
+            "-euc",
+            f'source "$1"; stage_{role}_files "$2" "$3" "$4"',
+            "test",
+            str(ROOT / f"scripts/install-{role}.sh"),
+            str(ROOT),
+            str(directory),
+            sys.executable,
+        ],
+        check=True,
+    )
+
+
 def test_pinned_acme_patch_and_offline_recovery(tmp_path):
     fixture = os.environ.get("CLM_TEST_ACME_ARCHIVE")
     if fixture is None:
         pytest.skip("Set CLM_TEST_ACME_ARCHIVE to the pinned upstream source archive")
     archive = Path(fixture)
+    stage_files(tmp_path, "server")
     assert hashlib.sha256(archive.read_bytes()).hexdigest() == TARBALL_SHA256
     subprocess.run(
         [
@@ -80,7 +99,8 @@ def test_pinned_acme_patch_and_offline_recovery(tmp_path):
             "HOME": str(tmp_path),
             "CLM_PYTHON": sys.executable,
             "CLM_DNS_JOURNAL": str(tmp_path / "dns-operation.json"),
-            "PYTHONPATH": str(ROOT / "src"),
+            "PYTHONPATH": str(tmp_path),
+            "CLM_DNS_MODULE": "app.dns_records",
         },
     )
 
@@ -94,7 +114,8 @@ def test_pinned_acme_patch_and_offline_recovery(tmp_path):
         "CLM_DNS_JOURNAL": str(state),
         "CLM_HOSTED_ZONE": "Z1",
         "CLM_CHALLENGE_RECORD": zone,
-        "PYTHONPATH": str(ROOT / "src"),
+        "PYTHONPATH": str(tmp_path),
+        "CLM_DNS_MODULE": "app.dns_records",
         "AWS_ACCESS_KEY_ID": "MOCK",
         "AWS_SECRET_ACCESS_KEY": "MOCK",
     }
@@ -106,8 +127,9 @@ import os
 import sys
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from clm_server import dns_records as dns
+from app import dns_records as dns
 
+assert sys.argv[1:3] == ["-m", "app.dns_records"]
 del sys.argv[1:3]
 mode = sys.argv[1]
 record = os.environ["CLM_CHALLENGE_RECORD"]
@@ -206,7 +228,7 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
         "-c",
         'source "$1"; "install_${2}_configuration" "$3" "$4" "$5"',
         "test",
-        str(ROOT / "scripts/install-configuration.sh"),
+        str(ROOT / f"scripts/install-{role}.sh"),
         role,
         str(ROOT),
         str(config),
@@ -250,7 +272,7 @@ def test_installer_refreshes_untouched_legacy_aws_configuration(tmp_path):
         "-euc",
         'source "$1"; install_server_configuration "$2" "$3" "$4"',
         "test",
-        str(ROOT / "scripts/install-configuration.sh"),
+        str(ROOT / "scripts/install-server.sh"),
         str(ROOT),
         str(config),
         str(tmp_path / "nginx-site"),
@@ -275,8 +297,8 @@ def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
     old_venv.mkdir(parents=True)
     (old_venv / "pyvenv.cfg").touch()
     (root / "venv/pyvenv.cfg").write_text("standard virtual environment")
-    (workspace / "application").mkdir(parents=True)
-    (workspace / "application/clm_server").mkdir()
+    (workspace / "app").mkdir(parents=True)
+    (workspace / "app/cli.py").write_text("# Standalone application")
     engine = root / "acme/engines" / f"{'b' * 40}-{old_release}"
     engine.mkdir(parents=True)
     (engine / "acme.sh").touch()
@@ -294,15 +316,14 @@ def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
     command = [
         "bash",
         "-euc",
-        'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout server "$2"',
+        'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout "$2"',
         "test",
-        str(ROOT / "scripts/install-layout.sh"),
+        str(ROOT / "scripts/install-server.sh"),
         str(root),
         str(workspace),
     ]
     subprocess.run(command, check=True)
-    assert (root / "app/clm_server").is_dir()
-    assert sorted(path.name for path in (root / "app").iterdir()) == ["clm_server"]
+    assert sorted(path.name for path in (root / "app").iterdir()) == ["cli.py"]
     assert sorted(path.name for path in (root / "venv").iterdir()) == ["pyvenv.cfg"]
     assert sorted(path.name for path in (root / "acme").iterdir()) == ["acme.sh", "instances"]
     for name, contents in protected.items():
@@ -314,25 +335,16 @@ def test_flat_layout_migration_keeps_account_and_certificate_data(tmp_path):
     [("server", {"clm", "clmd"}), ("client", {"clm-client"})],
 )
 def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, commands):
-    subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts/stage-application.py"),
-            str(ROOT),
-            role,
-            str(tmp_path),
-            sys.executable,
-        ],
-        check=True,
-    )
-    app = tmp_path / "application"
-    assert {entry.name for entry in app.iterdir()} == {f"clm_{role}"}
+    stage_files(tmp_path, role)
+    app = tmp_path / "app"
+    source = ROOT / "src" / ("clm_server" if role == "server" else "clm_client_debian")
+    assert {entry.name for entry in app.iterdir()} == {file.name for file in source.glob("*.py")}
     assert {entry.name for entry in (tmp_path / "bin").iterdir()} == commands
     for name in commands:
         args = ["--help"] if name == "clmd" else ["version"]
         result = subprocess.run(
             [sys.executable, str(tmp_path / "bin" / name), *args],
-            env={**os.environ, "PYTHONPATH": str(app)},
+            env={**os.environ, "PYTHONPATH": str(tmp_path)},
             check=True,
             capture_output=True,
             text=True,
@@ -344,3 +356,34 @@ def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, c
 
             metadata = tomllib.loads((ROOT / "pyproject.toml").read_text())
             assert result.stdout.strip() == metadata["project"]["version"]
+
+
+def test_client_upgrade_replaces_nested_package_and_keeps_registration(tmp_path):
+    root = tmp_path / "clm-client"
+    workspace = tmp_path / "stage"
+    workspace.mkdir()
+    (root / "app/clm_client").mkdir(parents=True)
+    (root / "config").mkdir()
+    credentials = root / "config/credentials"
+    credentials.write_text("existing client registration")
+    (root / "data").mkdir()
+    state = root / "data/state.json"
+    state.write_text("existing client certificate state")
+
+    stage_files(workspace, "client")
+    subprocess.run(
+        [
+            "bash",
+            "-euc",
+            'source "$1"; publish_application "$2/app" "$3"; remove_legacy_layout "$2"',
+            "test",
+            str(ROOT / "scripts/install-client.sh"),
+            str(root),
+            str(workspace),
+        ],
+        check=True,
+    )
+    assert (root / "app/cli.py").is_file()
+    assert not (root / "app/clm_client").exists()
+    assert credentials.read_text() == "existing client registration"
+    assert state.read_text() == "existing client certificate state"
