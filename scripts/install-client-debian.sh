@@ -9,10 +9,33 @@ keep_configuration() {
 
 install_client_configuration() {
     local sources=$1 config=$2
+    local hook="$config/hooks.d/restart-web-servers"
+    local legacy="$config/../bin/restart-web-servers"
+    local bundled="$sources/examples/client/hooks.d/restart-web-servers"
+    local mode=0700 checksum upgrade=false
     install -d -m 0700 "$config/hooks.d"
     keep_configuration 0600 "$sources/examples/client/client.yaml" "$config/client.yaml"
-    keep_configuration 0700 "$sources/examples/client/hooks.d/restart-web-servers" \
-        "$config/hooks.d/restart-web-servers"
+
+    if [[ -f $hook && ! -L $hook ]]; then
+        checksum=$(sha256sum < "$hook")
+        if [[ ${checksum%% *} == 923c02c5dd28cc462803161ae6a9bef813e683e3ce654f0383b43a08e9c4c6af ]]; then
+            upgrade=true
+            mode=$(stat -c %a -- "$hook")
+        fi
+    elif [[ ! -e $hook && ! -L $hook ]]; then
+        upgrade=true
+    fi
+    if "$upgrade"; then
+        if [[ -f $legacy && ! -L $legacy ]]; then
+            install -m "$mode" -- "$legacy" "$hook"
+            rm -- "$legacy"
+        else
+            install -m "$mode" -- "$bundled" "$hook"
+        fi
+    fi
+    if [[ -f $legacy && ! -L $legacy ]] && cmp -s -- "$legacy" "$bundled"; then
+        rm -- "$legacy"
+    fi
 }
 
 stage_client_files() {
@@ -92,10 +115,22 @@ remove_legacy_link() {
     fi
 }
 
+install_client_units() {
+    local sources=$1 root=$2 system_units=$3 unit
+    install -d -m 0755 "$root/systemd"
+    for unit in clm-client-update.timer clm-client-update.service; do
+        install -m 0644 -- "$sources/packaging/systemd/$unit" "$root/systemd/$unit"
+        ln -sfn -- "$root/systemd/$unit" "$system_units/$unit.new"
+        mv -Tf -- "$system_units/$unit.new" "$system_units/$unit"
+    done
+    systemctl daemon-reload
+    systemctl enable --now clm-client-update.timer
+}
+
 install_client() {
     set -euo pipefail
     umask 077
-    local root=/opt/clm-client sources unit
+    local root=/opt/clm-client sources
     if (($#)); then
         echo 'Run install-client-debian.sh without arguments.' >&2
         exit 2
@@ -135,16 +170,13 @@ install_client() {
     flock -x 8
     install_client_configuration "$sources" "$root/config"
     prepare_client_environment "$sources" "$root" "$workspace"
-    for unit in clm-client-update.timer clm-client-update.service; do
-        install -m 0644 "$sources/packaging/systemd/$unit" /etc/systemd/system/
-    done
     install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm-client" "$root/bin/clm-client"
-    install -m 0755 -- "$sources/src/clm_client_debian/restart-web-servers" \
-        "$root/bin/restart-web-servers"
     remove_legacy_link /usr/local/bin/clm-client "$root/bin/clm-client"
     remove_legacy_layout "$root"
+    flock -u 8
+    install_client_units "$sources" "$root" /etc/systemd/system
     echo 'Installed CLM Debian client. Configuration directory /opt/clm-client/config.'
 }
 

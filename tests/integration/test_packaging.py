@@ -409,7 +409,7 @@ def test_restart_web_servers_checks_activity_and_restarts_only_running_units(tmp
     systemctl.chmod(0o700)
     log = tmp_path / "systemctl.log"
     subprocess.run(
-        ["/bin/sh", str(ROOT / "src/clm_client_debian/restart-web-servers")],
+        ["/bin/sh", str(ROOT / "examples/client/hooks.d/restart-web-servers")],
         env={"PATH": str(tmp_path), "SYSTEMCTL_LOG": str(log)},
         check=True,
     )
@@ -474,3 +474,85 @@ configure_server_identity "$2"
         ],
         check=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("role", "timer", "units"),
+    [
+        ("server", "clm-renew.timer", ["clmd.socket", "clmd.service", "clm-renew.service"]),
+        ("client", "clm-client-update.timer", ["clm-client-update.service"]),
+    ],
+)
+def test_installers_link_units_from_the_application_and_enable_the_timer(
+    tmp_path, role, timer, units
+):
+    root = tmp_path / "opt"
+    system_units = tmp_path / "etc"
+    root.mkdir()
+    system_units.mkdir()
+    (system_units / timer).write_text("previous directly installed unit\n")
+    override = system_units / (timer + ".d")
+    override.mkdir()
+    (override / "override.conf").write_text("[Timer]\nRandomizedDelaySec=0\n")
+    log = tmp_path / "systemctl.log"
+    command = [
+        "bash",
+        "-euc",
+        f"""source "$1"
+log=$5
+systemctl() {{ printf '%s\\n' "$*" >> "$log"; }}
+install_{role}_units "$2" "$3" "$4"
+""",
+        "test",
+        str(ROOT / "scripts" / INSTALLERS[role]),
+        str(ROOT),
+        str(root),
+        str(system_units),
+        str(log),
+    ]
+    for _ in range(2):
+        subprocess.run(command, check=True)
+        for name in [timer, *units]:
+            unit = root / "systemd" / name
+            assert unit.is_file() and not unit.is_symlink()
+            assert unit.read_bytes() == (ROOT / "packaging/systemd" / name).read_bytes()
+            link = system_units / name
+            assert link.is_symlink() and link.readlink() == unit
+    assert (override / "override.conf").read_text() == "[Timer]\nRandomizedDelaySec=0\n"
+    assert log.read_text().splitlines() == [
+        "daemon-reload",
+        f"enable --now {timer}",
+        "daemon-reload",
+        f"enable --now {timer}",
+    ]
+
+
+def test_client_migrates_the_legacy_hook_without_reenabling_it(tmp_path):
+    config = tmp_path / "config"
+    hooks = config / "hooks.d"
+    hooks.mkdir(parents=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hook = hooks / "restart-web-servers"
+    hook.write_text(
+        '#!/bin/sh\nset -eu\nexec "${CLM_CLIENT_ROOT:-/opt/clm-client}/bin/restart-web-servers"\n'
+    )
+    hook.chmod(0o600)
+    legacy = bin_dir / hook.name
+    legacy.write_text("#!/bin/sh\n# Custom legacy script\nexit 0\n")
+
+    subprocess.run(
+        [
+            "bash",
+            "-euc",
+            'source "$1"; install_client_configuration "$2" "$3"',
+            "test",
+            str(ROOT / "scripts/install-client-debian.sh"),
+            str(ROOT),
+            str(config),
+        ],
+        check=True,
+    )
+    assert hook.read_text() == "#!/bin/sh\n# Custom legacy script\nexit 0\n"
+    assert hook.stat().st_mode & 0o777 == 0o600
+    assert not legacy.exists()

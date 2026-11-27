@@ -161,10 +161,22 @@ configure_server_identity() {
     fi
 }
 
+install_server_units() {
+    local sources=$1 root=$2 system_units=$3 unit
+    install -d -m 0755 "$root/systemd"
+    for unit in clmd.socket clmd.service clm-renew.timer clm-renew.service; do
+        install -m 0644 -- "$sources/packaging/systemd/$unit" "$root/systemd/$unit"
+        ln -sfn -- "$root/systemd/$unit" "$system_units/$unit.new"
+        mv -Tf -- "$system_units/$unit.new" "$system_units/$unit"
+    done
+    systemctl daemon-reload
+    systemctl enable --now clm-renew.timer
+}
+
 install_server() {
     set -euo pipefail
     umask 077
-    local root=/opt/clm sources environment unit
+    local root=/opt/clm sources environment
     if (($#)); then
         echo 'Run install-server.sh without arguments.' >&2
         exit 2
@@ -241,9 +253,6 @@ with database.connect() as connection:
         raise SystemExit("CLM database integrity check failed")
 PY
 
-    for unit in clmd.socket clmd.service clm-renew.timer clm-renew.service; do
-        install -m 0644 "$sources/packaging/systemd/$unit" /etc/systemd/system/
-    done
     install -m 0644 "$sources/packaging/logrotate/clm" /etc/logrotate.d/clm
     install -d -m 0700 "$root/acme/dnsapi"
     install -m 0700 -- "$workspace/acme/acme.sh" "$workspace/acme/recover-dns.sh" "$root/acme/"
@@ -254,6 +263,8 @@ PY
     remove_legacy_link /usr/local/bin/clm "$root/bin/clm"
     remove_legacy_link /usr/local/bin/clmd "$root/bin/clmd"
     remove_legacy_layout "$root"
+    flock -u 8
+    install_server_units "$sources" "$root" /etc/systemd/system
     echo 'Installed CLM server. Configuration directory /opt/clm/config.'
     echo 'Nginx site configuration is at /etc/nginx/sites-available/clm.'
 }

@@ -118,6 +118,7 @@ All application-specific files must be stored under `/opt/clm`.
 │   └── clmd
 ├── app/
 ├── venv/
+├── systemd/
 ├── acme/
 │   ├── acme.sh
 │   ├── dnsapi/
@@ -136,7 +137,7 @@ All application-specific files must be stored under `/opt/clm`.
 
 System-level integration files may be installed outside this directory where required:
 
-- systemd units under `/etc/systemd/system/`.
+- Links under `/etc/systemd/system/` to the unit files in the corresponding application’s `systemd/` directory.
 - Nginx configuration under `/etc/nginx/`.
 - CLI executables under the corresponding application installation directory.
 - Operating system packages and system users.
@@ -690,6 +691,7 @@ All application-specific client files must be stored under `/opt/clm-client`.
 │   └── clm-client
 ├── app/
 ├── venv/
+├── systemd/
 ├── config/
 │   ├── client.yaml
 │   └── hooks.d/
@@ -757,7 +759,7 @@ A failed download, validation, activation or hook returns a non-zero exit code. 
 
 The client runs executable scripts from `/opt/clm-client/config/hooks.d/` in filename order after a batch changes certificate material. Hooks are owned by the local CLM client account and protected from modification by other accounts. Each script has an execution timeout. The hook environment provides the batch's changed identifiers and event. If the update is rolled back, attempted hooks receive a rollback event after the previous certificate links are restored.
 
-The installed `restart-web-servers` example hook calls `/opt/clm-client/bin/restart-web-servers`. It restarts running Apache and Nginx units if present. The client publishes certificate files and executes local hooks. Other service configuration is managed by the operator.
+The installed `restart-web-servers` example in the hooks directory restarts running Apache and Nginx units if present. The client publishes certificate files and executes local hooks. Other service configuration is managed by the operator.
 
 ## 18. Automatic renewal and updates
 
@@ -888,7 +890,7 @@ Installation scripts must:
 - Install CLI executables under the application’s bin directory.
 - Install or provide the Nginx configuration.
 - Validate the resulting configuration.
-- Install service and timer definitions for the administrator to enable.
+- Install service and timer definitions under each application’s `systemd/` directory, link them from `/etc/systemd/system/`, and enable and start the renewal and update timers.
 - Be safe to execute repeatedly.
 
 Do not overwrite existing credentials, configuration or certificate data during repeated installations or upgrades.
