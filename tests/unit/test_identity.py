@@ -3,11 +3,14 @@ import pytest
 from clm_common.identity import normalise_identifier, storage_id
 
 
-@pytest.mark.parametrize(("source", "expected"), [
-    ("EXAMPLE.COM.", "example.com"),
-    ("*.Example.COM", "*.example.com"),
-    ("bücher.example", "xn--bcher-kva.example"),
-])
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("EXAMPLE.COM.", "example.com"),
+        ("*.Example.COM", "*.example.com"),
+        ("bücher.example", "xn--bcher-kva.example"),
+    ],
+)
 def test_normalisation(source, expected):
     assert normalise_identifier(source) == expected
 

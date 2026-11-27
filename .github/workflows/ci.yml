@@ -2,6 +2,7 @@ name: CI
 on: [push, pull_request]
 permissions:
   contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -13,6 +14,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install '.[dev]'
+      - run: python -m pip install --require-hashes -r packaging/requirements/server.txt
+      - run: python -m pip install '.[server,dev]'
       - run: ruff check .
-      - run: pytest
+      - run: ruff format --check .
+      - run: shellcheck scripts/*.sh packaging/acme/recover-dns.sh
+      - name: Verify the pinned upstream ACME source
+        run: |
+          archive="$RUNNER_TEMP/acme-source.tar.gz"
+          curl --fail --silent --show-error --location --proto '=https' \
+            'https://codeload.github.com/acmesh-official/acme.sh/tar.gz/5567d7fe7298fd37aca53194885ba444c6678669' \
+            --output "$archive"
+          printf '%s  %s\n' 22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc \
+            "$archive" | sha256sum --check --status
+          printf 'CLM_TEST_ACME_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
+      - run: pytest -q
+      - run: python -m pip check
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install 'pip-audit==2.10.0'
+      - run: pip-audit --no-deps --disable-pip -r packaging/requirements/server.txt -r packaging/requirements/build.txt
+      - run: pip-audit --no-deps --disable-pip -r packaging/requirements/client.txt
