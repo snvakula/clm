@@ -81,7 +81,7 @@
 -    _sleep 1
 +  _clm_zone "$1" zone && _clm_read "$1" || return 1
 +  _clm_change="$(printf '%s' "$response" | CLM_TXT_VALUE="$2" _clm_records add)" || return 1
-+  if aws_rest POST "2013-04-01$_domain_id/rrset/" "" "$_clm_change" &&
++  if aws_rest POST "2013-04-01$_domain_id/rrset" "" "$_clm_change" &&
 +    _contains "$response" "ChangeResourceRecordSetsResponse"; then
      return 0
    fi
@@ -127,7 +127,7 @@
 +  _clm_zone "$1" cleanup-zone && _clm_read "$1" || return 1
 +  _clm_change="$(printf '%s' "$response" | CLM_TXT_VALUE="$2" _clm_records remove)" || return 1
 +  if [ -n "$_clm_change" ]; then
-+    aws_rest POST "2013-04-01$_domain_id/rrset/" "" "$_clm_change" &&
++    aws_rest POST "2013-04-01$_domain_id/rrset" "" "$_clm_change" &&
 +      _contains "$response" "ChangeResourceRecordSetsResponse" || return 1
    fi
 -

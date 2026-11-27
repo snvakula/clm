@@ -35,8 +35,10 @@ class Profiles:
             if operation in profile and (
                 not isinstance(profile[operation], list)
                 or not profile[operation]
-                or any(not isinstance(arg, str) or not arg or "\x00" in arg
-                       for arg in profile[operation])
+                or any(
+                    not isinstance(arg, str) or not arg or "\x00" in arg
+                    for arg in profile[operation]
+                )
             ):
                 raise ValueError(f"Invalid service command for {name}")
         return profile
@@ -47,9 +49,15 @@ class Profiles:
         name = profile["name"]
         try:
             subprocess.run(
-                profile[operation], cwd="/", env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=profile.get("timeout", 30), check=True, umask=0o077,
+                profile[operation],
+                cwd="/",
+                env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin"},
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=profile.get("timeout", 30),
+                check=True,
+                umask=0o077,
             )
         except (OSError, subprocess.SubprocessError):
             raise ValueError(f"Service {operation} failed for {name}") from None

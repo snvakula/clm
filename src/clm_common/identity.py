@@ -1,4 +1,5 @@
 """Canonical certificate identifiers."""
+
 import base64
 import re
 
@@ -10,12 +11,12 @@ def normalise_identifier(value: str) -> str:
         raise ValueError("Invalid DNS identifier")
     wildcard = value.startswith("*.")
     name = value[2:] if wildcard else value
-    if name.endswith("."):
-        name = name[:-1]
     if "*" in name or not name:
         raise ValueError("Invalid wildcard or DNS identifier")
     try:
-        name = idna.encode(name, uts46=True, std3_rules=True).decode("ascii").lower().removesuffix(".")
+        name = (
+            idna.encode(name, uts46=True, std3_rules=True).decode("ascii").lower().removesuffix(".")
+        )
     except idna.IDNAError as exc:
         raise ValueError("Invalid DNS identifier") from exc
     if len(name) > 253 or "." not in name or not re.search(r"[a-z]", name.rsplit(".", 1)[1]):

@@ -29,7 +29,7 @@ CREATE TABLE certificates (
     last_error TEXT
 );
 CREATE TABLE clients (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     token_hash BLOB NOT NULL UNIQUE,
     enabled INTEGER NOT NULL DEFAULT 1,
@@ -83,7 +83,7 @@ class Database:
         self.path = path
 
     @contextmanager
-    def connect(self, *, write: bool = False, create: bool = False) -> Iterator:
+    def connect(self, *, write: bool = False, create: bool = False) -> Iterator[sqlite3.Connection]:
         mode = "rwc" if create else "rw"
         connection = sqlite3.connect(f"{self.path.as_uri()}?mode={mode}", uri=True, timeout=10)
         connection.row_factory = sqlite3.Row

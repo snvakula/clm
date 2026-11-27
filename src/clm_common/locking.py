@@ -1,4 +1,5 @@
 """POSIX inter-process locking for trusted application directories."""
+
 import fcntl
 import os
 import stat

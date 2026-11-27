@@ -12,6 +12,7 @@ if [[ $# != 1 || ($product != server && $product != client) ]]; then
     echo 'Run install-server.sh or install-client.sh without arguments.' >&2
     exit 2
 fi
+# shellcheck source=/dev/null
 . /etc/os-release
 if [[ $ID != debian || $VERSION_ID != 13 ]]; then
     echo 'This installer requires Debian 13.' >&2
@@ -57,6 +58,10 @@ switch_link() {
 if [[ $product == server ]]; then
     getent group clm-api >/dev/null || groupadd --system clm-api
     id clm-api >/dev/null 2>&1 || useradd --system --gid clm-api --home-dir "$root"         --no-create-home --shell /usr/sbin/nologin clm-api
+    if [[ $(id -u clm-api) == 0 || $(id -gn clm-api) != clm-api ]]; then
+        echo 'The clm-api identity must be unprivileged and use the clm-api group.' >&2
+        exit 1
+    fi
     install -d -m 3770 -o root -g clm-api "$root/data"
     install -d -m 2750 -o root -g clm-api "$root/data/certificates" "$root/logs"
     install -d -m 0700 "$root/config/aws" "$root/acme" "$root/acme/instances" "$root/acme/engines"
@@ -83,7 +88,7 @@ if [[ $product == server ]]; then
         curl --disable --fail --silent --show-error --location --proto '=https'             --proto-redir '=https' --max-time 120             "https://codeload.github.com/acmesh-official/acme.sh/tar.gz/$revision"             --output "$workspace/acme.tar.gz"
         printf '%s  %s\n'             22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc             "$workspace/acme.tar.gz" | sha256sum --check --status
         mkdir "$workspace/engine"
-        tar -xf "$workspace/acme.tar.gz" -C "$workspace/engine" --strip-components=1             "acme.sh-$revision/acme.sh" "acme.sh-$revision/dnsapi/dns_aws.sh"
+        tar -xf "$workspace/acme.tar.gz" -C "$workspace/engine" --strip-components=1             "acme.sh-$revision/acme.sh" "acme.sh-$revision/dnsapi/dns_aws.sh" "acme.sh-$revision/LICENSE.md"
         patch --batch --fuzz=0 -d "$workspace/engine" -p1 < "$sources/packaging/acme/dns-aws.patch"
         install -m 0700 "$sources/packaging/acme/recover-dns.sh" "$workspace/engine/recover-dns.sh"
         "$workspace/engine/acme.sh" --version >/dev/null
@@ -91,6 +96,9 @@ if [[ $product == server ]]; then
     fi
 else
     install -d -m 0700 "$root/config/services.d" "$root/certificates" "$root/data" "$root/logs"
+    keep_file 0600 root /dev/null "$root/run/update.lock"
+    exec 8<>"$root/run/update.lock"
+    flock -x 8
     keep_file 0600 root "$sources/examples/client/client.yaml" "$root/config/client.yaml"
     keep_file 0600 root "$sources/examples/client/services.d/nginx.yaml" "$root/config/services.d/nginx.yaml"
 fi
@@ -99,7 +107,7 @@ release=$(
     cd -- "$sources"
     {
         find src -type f -name '*.py' -print0 | sort -z | xargs -0 sha256sum
-        sha256sum pyproject.toml "packaging/requirements/$product.txt"
+        sha256sum pyproject.toml "packaging/requirements/$product.txt" packaging/requirements/build.txt
         python3 --version
     } | sha256sum | cut -d ' ' -f1
 )
@@ -114,7 +122,9 @@ if [[ ! -f $application/.ready ]]; then
         find src -type f -name '*.py' -exec cp --parents -t "$workspace/source" -- {} +
     )
     python3 -m venv "$environment"
-    "$environment/bin/python" -m pip --disable-pip-version-check install         -r "$sources/packaging/requirements/$product.txt" 'setuptools==80.9.0'
+    "$environment/bin/python" -m pip --disable-pip-version-check install \
+        --require-hashes -r "$sources/packaging/requirements/$product.txt" \
+        -r "$sources/packaging/requirements/build.txt"
     "$environment/bin/python" -m pip --disable-pip-version-check install --no-deps         --no-build-isolation "$workspace/source"
     "$environment/bin/python" -m pip check
     ln -s -- "$environment/bin/$program" "$workspace/application/$program"
@@ -182,4 +192,14 @@ if ! activate; then
     echo 'Failed to activate the systemd units.' >&2
     exit 1
 fi
+if [[ -n $previous && $previous != "releases/$release" ]]; then
+    switch_link "$root/app/previous" "$previous"
+fi
+retained=$(readlink "$root/app/previous" || :)
+for candidate in "$root/app/releases/"*; do
+    name=${candidate##*/}
+    if [[ $name =~ ^[a-f0-9]{64}$ && $name != "$release" && releases/$name != "$retained" ]]; then
+        rm -rf -- "$candidate" "$root/venv/$name"
+    fi
+done
 echo "Installed $program under $root."

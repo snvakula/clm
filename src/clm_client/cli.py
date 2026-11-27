@@ -17,8 +17,12 @@ from .application import Client
 
 
 def arguments() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="clm-client", description="Install and update certificates")
-    parser.add_argument("--root", type=Path, default=Path("/opt/clm-client"), help=argparse.SUPPRESS)
+    parser = argparse.ArgumentParser(
+        prog="clm-client", description="Install and update certificates"
+    )
+    parser.add_argument(
+        "--root", type=Path, default=Path("/opt/clm-client"), help=argparse.SUPPRESS
+    )
     commands = parser.add_subparsers(dest="action", required=True)
     init = commands.add_parser("init")
     init.add_argument("server")
@@ -55,13 +59,33 @@ def dispatch(args: argparse.Namespace, client: Client) -> None:
     action = args.action
     state = client.state()
     if action == "status":
-        display({
-            **state, "pending": bool(state["pending"]),
-            "repository_inconsistencies": [
-                identifier for identifier, row in state["certificates"].items()
-                if client.files.current(identifier) != row["version"]
-            ],
-        }, args.json)
+        inconsistent = []
+        certificates = []
+        for identifier, row in state["certificates"].items():
+            try:
+                if client.files.current(identifier) != row["version"]:
+                    raise ValueError("Unexpected active generation")
+                info = client.inspect(state, identifier)
+                certificates.append(
+                    {
+                        "identifier": identifier,
+                        "version": row["version"],
+                        "not_after": info["not_after"],
+                        "services": row["services"],
+                    }
+                )
+            except (OSError, ValueError):
+                inconsistent.append(identifier)
+        display(
+            {
+                "certificates": certificates,
+                "pending": bool(state["pending"]),
+                "last_update": state["last_update"],
+                "last_error": state["last_error"],
+                "repository_inconsistencies": inconsistent,
+            },
+            args.json,
+        )
         return
     client.recover(state)
     value = getattr(args, "identifier", None)
@@ -80,7 +104,12 @@ def dispatch(args: argparse.Namespace, client: Client) -> None:
     elif action == "install":
         client.apply(state, [identifier], service_names=args.service)
         info = client.inspect(state, identifier)
-        display({"certificate_path": info["certificate_path"], "private_key_path": info["private_key_path"]})
+        display(
+            {
+                "certificate_path": info["certificate_path"],
+                "private_key_path": info["private_key_path"],
+            }
+        )
     elif action == "update":
         if identifier and identifier not in state["certificates"]:
             raise ValueError("Certificate is not installed")
@@ -106,7 +135,11 @@ def main() -> int:
         with exclusive_lock(root / "run/update.lock"):
             dispatch(args, client)
     except (OSError, ValueError, EOFError) as exc:
-        message = str(exc) if type(exc) is ValueError else "CLM client could not read or update local state"
+        message = (
+            str(exc)
+            if type(exc) is ValueError
+            else "CLM client could not read or update local state"
+        )
         logger.error("%s", message)
         print(message, file=sys.stderr)
         return 1

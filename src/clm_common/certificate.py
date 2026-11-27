@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
@@ -69,8 +70,11 @@ def validate(
     chain = _certs(material["chain.pem"]) if material["chain.pem"].strip() else []
     if len(leafs) != 1 or _certs(material["fullchain.pem"]) != leafs + chain:
         raise ValueError("Full chain must contain the leaf followed by its intermediates")
-    for child, parent in zip(leafs + chain, chain):
-        child.verify_directly_issued_by(parent)
+    try:
+        for child, parent in zip(leafs + chain, chain):
+            child.verify_directly_issued_by(parent)
+    except (InvalidSignature, UnsupportedAlgorithm, TypeError):
+        raise ValueError("Invalid intermediate certificate signature") from None
     leaf = leafs[0]
     try:
         names = list(leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value)
@@ -87,7 +91,10 @@ def validate(
     key_data = material["privkey.pem"].strip()
     if not re.fullmatch(_KEY_BLOCK, key_data):
         raise ValueError("Invalid private key PEM")
-    key = serialization.load_pem_private_key(key_data, password=None)
+    try:
+        key = serialization.load_pem_private_key(key_data, password=None)
+    except (TypeError, UnsupportedAlgorithm):
+        raise ValueError("Unsupported private key") from None
     if isinstance(key, ec.EllipticCurvePrivateKey) and isinstance(
         key.curve, (ec.SECP256R1, ec.SECP384R1)
     ):
@@ -109,16 +116,27 @@ def validate(
         leaf_file = directory / "leaf.pem"
         leaf_file.write_bytes(material["cert.pem"])
         args = [
-            "/usr/bin/openssl", "verify", "-purpose", "sslserver", "-trusted", str(trust),
+            "/usr/bin/openssl",
+            "verify",
+            "-purpose",
+            "sslserver",
+            "-trusted",
+            str(trust),
         ]
         if chain:
             chain_file = directory / "chain.pem"
             chain_file.write_bytes(material["chain.pem"])
             args += ["-untrusted", str(chain_file)]
-        result = subprocess.run(
-            [*args, str(leaf_file)], env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
-            capture_output=True, timeout=15, check=False,
-        )
+        try:
+            result = subprocess.run(
+                [*args, str(leaf_file)],
+                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError("Certificate trust verification timed out") from None
     if result.returncode:
         raise ValueError("Certificate chain is not trusted for TLS server use")
     return {
@@ -149,8 +167,16 @@ def parse_manifest(data: bytes, identifier: str) -> dict[str, Any]:
     except (UnicodeError, ValueError, RecursionError):
         raise ValueError("Invalid certificate manifest") from None
     fields = {
-        "schema_version", "certificate_id", "version", "serial", "issuer",
-        "not_before", "not_after", "key_algorithm", "key_size", "files",
+        "schema_version",
+        "certificate_id",
+        "version",
+        "serial",
+        "issuer",
+        "not_before",
+        "not_after",
+        "key_algorithm",
+        "key_size",
+        "files",
     }
     if (
         not isinstance(value, dict)
@@ -172,9 +198,15 @@ def parse_manifest(data: bytes, identifier: str) -> dict[str, Any]:
             or not re.fullmatch("[a-f0-9]{64}", entry["sha256"])
             for entry in value["files"].values()
         )
-        or any(not isinstance(value[key], str) for key in (
-            "serial", "issuer", "not_before", "not_after",
-        ))
+        or any(
+            not isinstance(value[key], str)
+            for key in (
+                "serial",
+                "issuer",
+                "not_before",
+                "not_after",
+            )
+        )
     ):
         raise ValueError("Invalid certificate manifest")
     return value

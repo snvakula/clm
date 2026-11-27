@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import signal
 import sqlite3
 import sys
 from importlib.metadata import version
@@ -22,15 +23,18 @@ def parser() -> argparse.ArgumentParser:
     groups = cli.add_subparsers(dest="group", required=True)
     for group, actions in (
         ("cert", ("issue", "list", "show", "renew", "rotate-key", "revoke", "delete", "import")),
-        ("client", ("add", "list", "show", "grant", "deny", "rotate-token", "disable", "enable",
-                    "delete")),
+        (
+            "client",
+            ("add", "list", "show", "grant", "deny", "rotate-token", "disable", "enable", "delete"),
+        ),
     ):
         commands = groups.add_parser(group).add_subparsers(dest="action", required=True)
         for action in actions:
             command = commands.add_parser(action)
             if action != "list":
                 command.add_argument(
-                    "subject", nargs="?" if action == "renew" else None,
+                    "subject",
+                    nargs="?" if action == "renew" else None,
                     metavar="DNS_NAME" if group == "cert" else "CLIENT",
                 )
             if action in ("list", "show"):
@@ -71,16 +75,19 @@ def check(admin: Administration) -> None:
         engine.route.credentials(account)
         engine.instance(account)
     for path, mask in (
-        (root / "acme/instances", 0o077), (root / "config/aws", 0o077),
-        (root / "config/aws/credentials", 0o077), (root / "data/clm.db", 0o007),
+        (root / "acme/instances", 0o077),
+        (root / "config/aws", 0o077),
+        (root / "config/aws/credentials", 0o077),
+        (root / "data/clm.db", 0o007),
         (root / "data/certificates", 0o027),
     ):
         if path.is_symlink() or path.stat().st_mode & mask:
             raise ValueError(f"Unsafe permissions on {path}")
     with admin.db.connect() as connection:
-        if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok" or connection.execute(
-            "PRAGMA foreign_key_check"
-        ).fetchone():
+        if (
+            connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
+            or connection.execute("PRAGMA foreign_key_check").fetchone()
+        ):
             raise ValueError("Database integrity check failed")
     with exclusive_lock(admin.operations), publication_lock(admin.repo.lock, write=True):
         admin.repo.reconcile()
@@ -112,8 +119,12 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                         failed = True
                 return int(failed)
         if action == "list":
-            output(admin.db.all("SELECT * FROM certificates WHERE status<>'deleted' ORDER BY identifier"),
-                   args.json)
+            output(
+                admin.db.all(
+                    "SELECT * FROM certificates WHERE status<>'deleted' ORDER BY identifier"
+                ),
+                args.json,
+            )
             return 0
         identifier = normalise_identifier(args.subject)
         if action == "show":
@@ -128,8 +139,12 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
         elif action == "delete":
             admin.delete(identifier, force=args.force)
         else:
-            number = admin.obtain(identifier, action, algorithm=getattr(args, "key", None),
-                                  force=getattr(args, "force", False))
+            number = admin.obtain(
+                identifier,
+                action,
+                algorithm=getattr(args, "key", None),
+                force=getattr(args, "force", False),
+            )
             output(f"{identifier} generation {number}")
     elif args.group == "client":
         if action in ("list", "show"):
@@ -140,13 +155,18 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                 row = admin.db.one(f"SELECT {columns} FROM clients WHERE name=?", (args.subject,))
                 if row is None:
                     raise ValueError("Unknown client")
-                row["certificates"] = [grant["identifier"] for grant in admin.db.all(
-                    "SELECT identifier FROM grants WHERE client_id=? ORDER BY identifier",
-                    (row["id"],),
-                )]
+                row["certificates"] = [
+                    grant["identifier"]
+                    for grant in admin.db.all(
+                        "SELECT identifier FROM grants WHERE client_id=? ORDER BY identifier",
+                        (row["id"],),
+                    )
+                ]
                 output(row, args.json)
         else:
-            identifier = normalise_identifier(args.identifier) if action in ("grant", "deny") else None
+            identifier = (
+                normalise_identifier(args.identifier) if action in ("grant", "deny") else None
+            )
             token = admin.client_change(args.subject, action, identifier)
             if token:
                 print(token)
@@ -163,15 +183,23 @@ def dispatch(admin: Administration, args: argparse.Namespace, cli: argparse.Argu
                         inconsistent.append(row["identifier"])
                 except (OSError, ValueError):
                     inconsistent.append(row["identifier"])
-            output({"certificates": certificates, "repository_inconsistencies": inconsistent}, args.json)
+            output(
+                {"certificates": certificates, "repository_inconsistencies": inconsistent},
+                args.json,
+            )
     elif action == "check":
         check(admin)
         print("Configuration, database and certificate repository checks passed")
     return 0
 
 
+def _terminate(signum: int, frame: object) -> None:
+    raise OSError("CLM operation interrupted")
+
+
 def main() -> int:
     os.umask(0o077)
+    signal.signal(signal.SIGTERM, _terminate)
     cli = parser()
     args = cli.parse_args()
     if args.group == "version":
@@ -182,9 +210,13 @@ def main() -> int:
     try:
         result = dispatch(admin, args, cli)
     except (OSError, ValueError, sqlite3.Error) as exc:
-        message = str(exc) if isinstance(exc, ValueError) else "CLM could not read or update local state"
+        message = (
+            str(exc) if isinstance(exc, ValueError) else "CLM could not read or update local state"
+        )
         logger.error("%s", message)
         print(message, file=sys.stderr)
         return 1
-    logger.info("%s %s completed with exit status %s", args.group, getattr(args, "action", ""), result)
+    logger.info(
+        "%s %s completed with exit status %s", args.group, getattr(args, "action", ""), result
+    )
     return result

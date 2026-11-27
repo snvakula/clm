@@ -30,16 +30,16 @@ def verify_zone(xml: bytes, zone: str, record: str, *, delegation: bool) -> None
     if hosted is None or hosted.findtext(tag("Id")) != f"/hostedzone/{zone}":
         raise ValueError("Route 53 returned an unexpected zone")
     name = dns_name(hosted.findtext(tag("Name"), ""))
-    if (
-        hosted.findtext(f"{tag('Config')}/{tag('PrivateZone')}") != "false"
-        or not (record == name or record.endswith("." + name))
+    if hosted.findtext(f"{tag('Config')}/{tag('PrivateZone')}") != "false" or not (
+        record == name or record.endswith("." + name)
     ):
         raise ValueError("Configured hosted zone is not public or does not contain the endpoint")
 
     if delegation:
         response = ET.fromstring(xml)
         nameservers = {
-            dns_name(element.text or "") for element in response.findall(
+            dns_name(element.text or "")
+            for element in response.findall(
                 f"{tag('DelegationSet')}/{tag('NameServers')}/{tag('NameServer')}",
             )
         }
@@ -58,7 +58,8 @@ def change(xml: bytes, record: str, value: str, *, remove: bool) -> bytes:
         raise ValueError("Unexpected Route 53 response")
     records = response.findall(f"{tag('ResourceRecordSets')}/{tag('ResourceRecordSet')}")
     matching = [
-        item for item in records
+        item
+        for item in records
         if item.findtext(tag("Name")) == record + "." and item.findtext(tag("Type")) == "TXT"
     ]
     if len(matching) > 1:
@@ -68,12 +69,16 @@ def change(xml: bytes, record: str, value: str, *, remove: bool) -> bytes:
     values = []
     if existing is not None:
         if {child.tag for child in existing} != {
-            tag("Name"), tag("Type"), tag("TTL"), tag("ResourceRecords"),
+            tag("Name"),
+            tag("Type"),
+            tag("TTL"),
+            tag("ResourceRecords"),
         }:
             raise ValueError("Challenge endpoint must use a simple TXT record set")
         ttl = existing.findtext(tag("TTL"), "")
         values = [
-            element.text for element in existing.findall(
+            element.text
+            for element in existing.findall(
                 f"{tag('ResourceRecords')}/{tag('ResourceRecord')}/{tag('Value')}"
             )
         ]
@@ -99,14 +104,17 @@ def change(xml: bytes, record: str, value: str, *, remove: bool) -> bytes:
             ET.SubElement(replacement, tag(key)).text = text
         resource_records = ET.SubElement(replacement, tag("ResourceRecords"))
         for item in updated:
-            ET.SubElement(ET.SubElement(resource_records, tag("ResourceRecord")), tag("Value")).text = item
+            ET.SubElement(
+                ET.SubElement(resource_records, tag("ResourceRecord")), tag("Value")
+            ).text = item
     return ET.tostring(request)
 
 
 def entry(path: Path) -> dict[str, str]:
     value = json.loads(read_regular(path, 4096, private=True))
     if (
-        not isinstance(value, dict) or set(value) != {"record", "zone", "value"}
+        not isinstance(value, dict)
+        or set(value) != {"record", "zone", "value"}
         or not all(isinstance(item, str) for item in value.values())
         or dns_name(value["record"]) != value["record"]
         or not value["record"].startswith("_acme-challenge.")
@@ -127,14 +135,24 @@ def signed_request(method: str, path: str, query: str, data: bytes) -> bytes:
     if token := os.environ.get("AWS_SESSION_TOKEN"):
         headers["x-amz-security-token"] = token
     names = ";".join(sorted(headers))
-    canonical = "\n".join((
-        method, "/" + path, query,
-        "".join(f"{name}:{headers[name]}\n" for name in sorted(headers)),
-        names, hashlib.sha256(data).hexdigest(),
-    ))
-    text = "\n".join((
-        "AWS4-HMAC-SHA256", timestamp, scope, hashlib.sha256(canonical.encode()).hexdigest(),
-    ))
+    canonical = "\n".join(
+        (
+            method,
+            "/" + path,
+            query,
+            "".join(f"{name}:{headers[name]}\n" for name in sorted(headers)),
+            names,
+            hashlib.sha256(data).hexdigest(),
+        )
+    )
+    text = "\n".join(
+        (
+            "AWS4-HMAC-SHA256",
+            timestamp,
+            scope,
+            hashlib.sha256(canonical.encode()).hexdigest(),
+        )
+    )
     key = ("AWS4" + os.environ["AWS_SECRET_ACCESS_KEY"]).encode()
     for part in scope.split("/"):
         key = hmac.digest(key, part.encode(), "sha256")
@@ -145,7 +163,9 @@ def signed_request(method: str, path: str, query: str, data: bytes) -> bytes:
     )
     request = urllib.request.Request(
         f"https://{host}/{path}" + (f"?{query}" if query else ""),
-        data=data if method == "POST" else None, headers=headers, method=method,
+        data=data if method == "POST" else None,
+        headers=headers,
+        method=method,
     )
     if method == "POST":
         request.add_header("Content-Type", "application/xml")

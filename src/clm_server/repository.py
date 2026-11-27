@@ -49,9 +49,19 @@ class Repository:
                    generation=?, serial=?, not_before=?, not_after=?, algorithm=?, account=?,
                    alias=?, zone=?, status='active', last_error=NULL,
                    last_renewal=CASE WHEN ? THEN ? ELSE last_renewal END WHERE identifier=?""",
-                (version, manifest["serial"], manifest["not_before"], manifest["not_after"],
-                 KEYS[manifest["key_algorithm"], manifest["key_size"]], entry["account"],
-                 entry["alias"], entry["zone"], entry["renewed"], now(), identifier),
+                (
+                    version,
+                    manifest["serial"],
+                    manifest["not_before"],
+                    manifest["not_after"],
+                    KEYS[manifest["key_algorithm"], manifest["key_size"]],
+                    entry["account"],
+                    entry["alias"],
+                    entry["zone"],
+                    entry["renewed"],
+                    now(),
+                    identifier,
+                ),
             )
             connection.execute("DELETE FROM publication WHERE identifier=?", (identifier,))
             audit(connection, "publish", identifier=identifier, generation=version)
@@ -65,7 +75,7 @@ class Repository:
             ).fetchall()
         self.files.clean(identifier, {row["generation"], row["previous"], *(r[0] for r in leases)})
 
-    def reconcile(self) -> None:
+    def reconcile(self, *, repairing: str | None = None) -> None:
         """Call with the exclusive publication lock held."""
         for entry in self.db.all("SELECT * FROM publication"):
             identifier = entry["identifier"]
@@ -86,33 +96,59 @@ class Repository:
                     self.files.activate(identifier, None)
                     self.files.clean(identifier, set())
             else:
-                current = self.files.current(identifier)
-                expected = row["generation"] or None
-                if current != expected:
-                    raise ValueError(f"Repository generation differs from database for {identifier}")
+                try:
+                    consistent = self.files.current(identifier) == (row["generation"] or None)
+                except (OSError, ValueError):
+                    consistent = False
+                if not consistent and identifier != repairing:
+                    raise ValueError(
+                        f"Repository generation differs from database for {identifier}"
+                    )
                 self._prune(row)
 
     def publish(
-        self, row: dict, material: dict[str, bytes], *,
-        account: str | None = None, alias: str | None = None, zone: str | None = None, renewed: bool = False,
+        self,
+        row: dict,
+        material: dict[str, bytes],
+        *,
+        account: str | None = None,
+        alias: str | None = None,
+        zone: str | None = None,
+        renewed: bool = False,
     ) -> int:
         """Validate before publication. Call with the exclusive publication lock held."""
         identifier = row["identifier"]
         version = row["generation"] + 1
         manifest = validate(identifier, version, material, self.root / "run", self.trust)
         if row["status"] == "active":
-            _, previous = self.manifest(identifier, row["generation"])
-            if manifest["files"] == previous["files"]:
+            try:
+                _, previous = self.manifest(identifier, row["generation"])
+            except (OSError, ValueError):
+                previous = None
+            if previous and manifest["files"] == previous["files"]:
                 return row["generation"]
-        self.files.clean(identifier, {
-            row["generation"], row["previous"],
-            *(lease["version"] for lease in self.db.all(
-                "SELECT version FROM bundle_leases WHERE identifier=?", (identifier,)
-            )),
-        })
+        self.files.clean(
+            identifier,
+            {
+                row["generation"],
+                row["previous"],
+                *(
+                    lease["version"]
+                    for lease in self.db.all(
+                        "SELECT version FROM bundle_leases WHERE identifier=?", (identifier,)
+                    )
+                ),
+            },
+        )
         self.files.stage(identifier, version, {**material, "manifest.json": json_bytes(manifest)})
-        entry = dict(identifier=identifier, version=version, account=account, alias=alias, zone=zone,
-                     renewed=int(renewed))
+        entry = dict(
+            identifier=identifier,
+            version=version,
+            account=account,
+            alias=alias,
+            zone=zone,
+            renewed=int(renewed),
+        )
         with self.db.connect(write=True) as connection:
             connection.execute(
                 "INSERT INTO publication VALUES (:identifier, :version, :account, :alias, :zone, :renewed)",

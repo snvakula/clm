@@ -46,13 +46,15 @@ class Remote:
         context = ssl.create_default_context()
         context.minimum_version = ssl.TLSVersion.TLSv1_2
         self.opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), NoRedirect(),
+            urllib.request.ProxyHandler({}),
+            NoRedirect(),
             urllib.request.HTTPSHandler(context=context),
         )
 
     def get(self, path: str, maximum: int) -> bytes:
         request = urllib.request.Request(
-            self.server + path, headers={"Authorization": f"Bearer {self.token}"},
+            self.server + path,
+            headers={"Authorization": f"Bearer {self.token}"},
         )
         try:
             with self.opener.open(request, timeout=self.timeout) as response:
@@ -89,14 +91,19 @@ class Remote:
 
     def available(self) -> list[dict]:
         certificates = self.object("/certificates").get("certificates")
-        if not isinstance(certificates, list) or any(not isinstance(row, dict) for row in certificates):
+        if not isinstance(certificates, list) or any(
+            not isinstance(row, dict) for row in certificates
+        ):
             raise ValueError("CLM server returned an invalid certificate list")
         return certificates
 
     def manifest(self, identifier: str) -> dict:
         return parse_manifest(
-            self.get(f"/certificates/{storage_id(identifier)}/manifest", MAX_FILE), identifier,
+            self.get(f"/certificates/{storage_id(identifier)}/manifest", MAX_FILE),
+            identifier,
         )
 
     def bundle(self, identifier: str, number: int) -> bytes:
-        return self.get(f"/certificates/{storage_id(identifier)}/versions/{number}/bundle", MAX_BUNDLE)
+        return self.get(
+            f"/certificates/{storage_id(identifier)}/versions/{number}/bundle", MAX_BUNDLE
+        )

@@ -52,7 +52,11 @@ class Client:
     def _remote(self, server: str, token: str) -> Remote:
         settings = load_config(self.root / "config/client.yaml")
         timeout = settings.get("request_timeout", 20)
-        if set(settings) - {"request_timeout"} or type(timeout) is not int or not 1 <= timeout <= 120:
+        if (
+            set(settings) - {"request_timeout"}
+            or type(timeout) is not int
+            or not 1 <= timeout <= 120
+        ):
             raise ValueError("Invalid client request timeout")
         if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
             raise ValueError("Invalid client access token")
@@ -74,7 +78,11 @@ class Client:
     def initialise(self, server: str, token: str) -> str:
         url = endpoint(server)
         name = self._remote(url, token).client()
-        if self.credentials.exists() and self.state()["certificates"] and url != self.remote().server:
+        if (
+            self.credentials.exists()
+            and self.state()["certificates"]
+            and url != self.remote().server
+        ):
             raise ValueError("Remove installed certificates before changing the CLM server")
         write_atomic(self.credentials, json_bytes({"server": url, "token": token}))
         return name
@@ -142,21 +150,26 @@ class Client:
         directory = self.files.directory(identifier, row["version"])
         manifest = parse_manifest(read_regular(directory / "manifest.json", MAX_FILE), identifier)
         return {
-            **manifest, "services": row["services"],
+            **manifest,
+            "services": row["services"],
             "certificate_path": str(live / "fullchain.pem"),
             "private_key_path": str(live / "privkey.pem"),
         }
 
     def apply(
-        self, state: dict, identifiers: list[str], *, service_names: list[str] | None = None,
+        self,
+        state: dict,
+        identifiers: list[str],
+        *,
+        service_names: list[str] | None = None,
     ) -> None:
         if not identifiers:
             return
-        remote = self.remote()
         pending = {"switching": False, "changes": {}}
         registrations = dict(state["certificates"])
         profiles = {}
         try:
+            remote = self.remote()
             for identifier in identifiers:
                 row = state["certificates"].get(identifier, {})
                 services = sorted(set(row.get("services", ())) | set(service_names or ()))
@@ -165,11 +178,19 @@ class Client:
                         profiles[name] = self.profiles.load(name)
                 incoming = remote.manifest(identifier)
                 number = incoming["version"]
+                local_files = None
+                copied = False
                 if row:
                     directory = self.files.directory(identifier, row["version"])
                     try:
-                        local = validate(identifier, row["version"], read_material(directory),
-                                         self.root / "run", self.trust)
+                        local_files = read_material(directory)
+                        local = validate(
+                            identifier,
+                            row["version"],
+                            local_files,
+                            self.root / "run",
+                            self.trust,
+                        )
                     except (OSError, ValueError):
                         local = None
                     if number < row["version"]:
@@ -178,50 +199,71 @@ class Client:
                         registrations[identifier] = {**row, "services": services}
                         continue
                     if number == row["version"]:
-                        raise ValueError(f"Installed generation requires local recovery for {identifier}")
-                archive = unpack_bundle(remote.bundle(identifier, number))
+                        raise ValueError(
+                            f"Installed generation requires local recovery for {identifier}"
+                        )
+                    copied = local is not None and {**local, "version": number} == incoming
+                archive = (
+                    {**local_files, "manifest.json": json_bytes(incoming)}
+                    if copied
+                    else unpack_bundle(remote.bundle(identifier, number))
+                )
                 bundled = parse_manifest(archive["manifest.json"], identifier)
                 material = {name: archive[name] for name in PEMS}
                 verified = validate(identifier, number, material, self.root / "run", self.trust)
                 if verified != bundled or bundled != incoming:
-                    raise ValueError(f"Certificate bundle does not match its manifest for {identifier}")
+                    raise ValueError(
+                        f"Certificate bundle does not match its manifest for {identifier}"
+                    )
                 pending["changes"][identifier] = {
-                    "old": row.get("version"), "new": number, "services": services,
+                    "old": row.get("version"),
+                    "new": number,
+                    "services": [] if copied else services,
                 }
                 state["pending"] = pending
                 self.save(state)
                 self.files.stage(identifier, number, archive)
                 registrations[identifier] = {
-                    "version": number, "previous": row.get("version"), "services": services,
+                    "version": number,
+                    "previous": row.get("version"),
+                    "services": services,
                 }
             if pending["changes"]:
                 pending["switching"] = True
                 self.save(state)
                 for identifier, change in pending["changes"].items():
                     self.files.activate(identifier, change["new"])
-                affected = sorted({
-                    name for change in pending["changes"].values() for name in change["services"]
-                })
+                affected = sorted(
+                    {name for change in pending["changes"].values() for name in change["services"]}
+                )
                 for name in affected:
                     self.profiles.execute(profiles[name], "check")
                 for name in affected:
                     self.profiles.execute(profiles[name], "reload")
                     self.profiles.execute(profiles[name], "verify")
             completed = {
-                **state, "pending": None, "certificates": registrations,
-                "last_update": utc(datetime.now(UTC)), "last_error": None,
+                **state,
+                "pending": None,
+                "certificates": registrations,
+                "last_update": utc(datetime.now(UTC)),
+                "last_error": None,
             }
             self.save(completed)
         except (OSError, ValueError) as exc:
             # Read the durable record even when an fsync or write reported a late failure.
             durable = self.state()
             self.recover(durable)
-            detail = str(exc) if isinstance(exc, ValueError) else "Local certificate update I/O failed"
+            detail = (
+                str(exc) if isinstance(exc, ValueError) else "Local certificate update I/O failed"
+            )
             durable["last_error"] = detail
             self.save(durable)
             raise ValueError(detail) from None
         state.update(completed)
         self.recover(state)
         for identifier in pending["changes"]:
-            self.logger.info("Activated certificate %s generation %s",
-                             identifier, registrations[identifier]["version"])
+            self.logger.info(
+                "Activated certificate %s generation %s",
+                identifier,
+                registrations[identifier]["version"],
+            )

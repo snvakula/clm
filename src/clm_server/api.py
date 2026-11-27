@@ -3,6 +3,7 @@
 import argparse
 import hmac
 import ipaddress
+import logging
 import os
 import re
 import sqlite3
@@ -40,8 +41,13 @@ class Attempts:
         with self.lock:
             current = time.monotonic()
             deadline, count = self.entries.get(source, (0.0, 0))
-            self.entries[source] = (deadline, count + 1) if deadline > current else (
-                current + 60, 1,
+            self.entries[source] = (
+                (deadline, count + 1)
+                if deadline > current
+                else (
+                    current + 60,
+                    1,
+                )
             )
             self.entries.move_to_end(source)
             if len(self.entries) > 4096:
@@ -52,6 +58,7 @@ def create_app(root: Path) -> FastAPI:
     repo = Repository(root)
     app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
     attempts = Attempts()
+    logger = logging.getLogger("clmd")
 
     @app.middleware("http")
     async def no_store(request: Request, call_next) -> Response:
@@ -71,20 +78,35 @@ def create_app(root: Path) -> FastAPI:
         if attempts.limited(source):
             raise HTTPException(429, "Too many authentication attempts")
         authorisation = request.headers.getlist("authorization")
-        scheme, _, token = authorisation[0].partition(" ") if len(authorisation) == 1 else ("", "", "")
-        digest = token_hash(token) if scheme.lower() == "bearer" and TOKEN.fullmatch(token) else bytes(32)
+        scheme, _, token = (
+            authorisation[0].partition(" ") if len(authorisation) == 1 else ("", "", "")
+        )
+        digest = (
+            token_hash(token)
+            if scheme.lower() == "bearer" and TOKEN.fullmatch(token)
+            else bytes(32)
+        )
         client = connection.execute(
-            "SELECT * FROM clients WHERE token_hash=?", (digest,),
+            "SELECT * FROM clients WHERE token_hash=?",
+            (digest,),
         ).fetchone()
-        if not client or not client["enabled"] or not hmac.compare_digest(client["token_hash"], digest):
+        if (
+            not client
+            or not client["enabled"]
+            or not hmac.compare_digest(client["token_hash"], digest)
+        ):
             attempts.fail(source)
+            logger.warning("Authentication failed from %s", source)
             audit(connection, "authenticate", "unknown", result="failure", source=source)
             connection.commit()
             raise HTTPException(
-                401, "Authentication required", headers={"WWW-Authenticate": "Bearer"},
+                401,
+                "Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
             )
         connection.execute(
-            "UPDATE clients SET last_authentication=? WHERE id=?", (now(), client["id"]),
+            "UPDATE clients SET last_authentication=? WHERE id=?",
+            (now(), client["id"]),
         )
         return client, source
 
@@ -119,7 +141,8 @@ def create_app(root: Path) -> FastAPI:
                           c.generation AS version, c.not_after
                    FROM certificates c JOIN grants g ON c.identifier=g.identifier
                    WHERE g.client_id=? AND c.status='active' AND c.not_after>?
-                   ORDER BY c.identifier""", (client["id"], now()),
+                   ORDER BY c.identifier""",
+                (client["id"], now()),
             )
             return {"certificates": [dict(row) for row in rows]}
 
@@ -133,8 +156,13 @@ def create_app(root: Path) -> FastAPI:
             connection.execute("DELETE FROM bundle_leases WHERE expires<=?", (stamp,))
             connection.execute(
                 """INSERT OR REPLACE INTO bundle_leases VALUES (?, ?, ?, ?, ?)""",
-                (client["id"], row["identifier"], row["generation"],
-                 client["token_hash"], stamp + LEASE_SECONDS),
+                (
+                    client["id"],
+                    row["identifier"],
+                    row["generation"],
+                    client["token_hash"],
+                    stamp + LEASE_SECONDS,
+                ),
             )
             return Response(content=data, media_type="application/json")
 
@@ -147,11 +175,20 @@ def create_app(root: Path) -> FastAPI:
                 connection.commit()
                 raise HTTPException(404, "Certificate unavailable")
             number = int(version)
-            if number != row["generation"] and not connection.execute(
-                """SELECT 1 FROM bundle_leases WHERE client_id=? AND identifier=? AND version=?
+            if (
+                number != row["generation"]
+                and not connection.execute(
+                    """SELECT 1 FROM bundle_leases WHERE client_id=? AND identifier=? AND version=?
                    AND token_hash=? AND expires>?""",
-                (client["id"], row["identifier"], number, client["token_hash"], int(time.time())),
-            ).fetchone():
+                    (
+                        client["id"],
+                        row["identifier"],
+                        number,
+                        client["token_hash"],
+                        int(time.time()),
+                    ),
+                ).fetchone()
+            ):
                 connection.commit()
                 raise HTTPException(404, "Certificate unavailable")
             data, metadata = repo.manifest(row["identifier"], number)
@@ -163,10 +200,20 @@ def create_app(root: Path) -> FastAPI:
                 raise ValueError("Corrupt certificate generation")
             payload = make_bundle(material, data)
             connection.execute(
-                "UPDATE clients SET last_download=? WHERE id=?", (now(), client["id"]),
+                "UPDATE clients SET last_download=? WHERE id=?",
+                (now(), client["id"]),
             )
-            audit(connection, "download", client["name"], identifier=row["identifier"],
-                  generation=number, source=source)
+            audit(
+                connection,
+                "download",
+                client["name"],
+                identifier=row["identifier"],
+                generation=number,
+                source=source,
+            )
+            logger.info(
+                "Distributed %s generation %s to %s", row["identifier"], number, client["name"]
+            )
             return Response(content=payload, media_type="application/zip")
 
     return app

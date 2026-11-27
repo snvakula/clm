@@ -11,11 +11,13 @@ from .certificate import utc
 
 class EventFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps({
-            "timestamp": utc(datetime.fromtimestamp(record.created, UTC)),
-            "level": record.levelname.lower(),
-            "message": record.getMessage(),
-        })
+        return json.dumps(
+            {
+                "timestamp": utc(datetime.fromtimestamp(record.created, UTC)),
+                "level": record.levelname.lower(),
+                "message": record.getMessage(),
+            }
+        )
 
 
 def configure_logging(directory: Path, name: str) -> logging.Logger:

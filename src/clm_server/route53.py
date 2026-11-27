@@ -46,7 +46,8 @@ def _public_records(name: str, kind: str, number: int) -> list[str]:
     if payload.get("Status") not in (0, 3):
         raise ValueError(f"Public DNS lookup failed for {name}")
     return [
-        dns_name(item["data"]) for item in payload.get("Answer", [])
+        dns_name(item["data"])
+        for item in payload.get("Answer", [])
         if item["type"] == number and dns_name(item["name"]) == name
     ]
 
@@ -110,7 +111,9 @@ class Route53:
             self.aliases[alias] = Target(entry["account"], alias, entry["hosted_zone_id"])
 
     def discover(
-        self, identifier: str, lookup: Callable[[str], list[str]] = public_cnames,
+        self,
+        identifier: str,
+        lookup: Callable[[str], list[str]] = public_cnames,
     ) -> Target:
         first = dns_name(PREFIX + identifier.removeprefix("*."))
         name = first
@@ -133,7 +136,9 @@ class Route53:
     def credentials(self, account: str) -> dict[str, str]:
         parser = configparser.ConfigParser(interpolation=None)
         try:
-            parser.read_string(read_regular(self.credentials_path, 64 * 1024, private=True).decode())
+            parser.read_string(
+                read_regular(self.credentials_path, 64 * 1024, private=True).decode()
+            )
             entry = parser[self.accounts[account]]
             result = {
                 "AWS_ACCESS_KEY_ID": entry["aws_access_key_id"],

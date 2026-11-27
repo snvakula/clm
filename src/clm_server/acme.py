@@ -13,8 +13,11 @@ from .route53 import Route53, Target
 
 PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 LENGTHS = {
-    "ec-256": "ec-256", "ec-384": "ec-384", "rsa-2048": "2048",
-    "rsa-3072": "3072", "rsa-4096": "4096",
+    "ec-256": "ec-256",
+    "ec-384": "ec-384",
+    "rsa-2048": "2048",
+    "rsa-3072": "3072",
+    "rsa-4096": "4096",
 }
 
 
@@ -30,11 +33,25 @@ class Acme:
         if account not in self.route.accounts:
             raise ValueError("Unknown ACME account")
         instance = self.root / "acme/instances" / account
-        for path in (instance, *(instance / name for name in (
-            "config", "certificates", "logs", "work", "exports",
-        ))):
+        for path in (
+            instance,
+            *(
+                instance / name
+                for name in (
+                    "config",
+                    "certificates",
+                    "logs",
+                    "work",
+                    "exports",
+                )
+            ),
+        ):
             path.mkdir(mode=0o700, exist_ok=True)
-            if path.is_symlink() or path.stat().st_uid != os.geteuid() or path.stat().st_mode & 0o077:
+            if (
+                path.is_symlink()
+                or path.stat().st_uid != os.geteuid()
+                or path.stat().st_mode & 0o077
+            ):
                 raise ValueError("Unsafe ACME instance permissions")
         return instance
 
@@ -56,9 +73,15 @@ class Acme:
         descriptors = () if self.lock_descriptor is None else (self.lock_descriptor,)
         try:
             with subprocess.Popen(
-                args, env=env, cwd=env["HOME"], stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, umask=0o077,
-                pass_fds=descriptors, start_new_session=True,
+                args,
+                env=env,
+                cwd=env["HOME"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                umask=0o077,
+                pass_fds=descriptors,
+                start_new_session=True,
             ) as process:
                 try:
                     status = process.wait(timeout=1200)
@@ -87,36 +110,67 @@ class Acme:
                 raise ValueError("Restore the original Route 53 configuration for DNS recovery")
             self._run(
                 ["/bin/sh", str(self.engine / "recover-dns.sh"), str(self.engine)],
-                self._environment(target), "DNS cleanup",
+                self._environment(target),
+                "DNS cleanup",
             )
 
     def _command(
-        self, operation: str, target: Target, identifier: str, algorithm: str,
+        self,
+        operation: str,
+        target: Target,
+        identifier: str,
+        algorithm: str,
         arguments: list[str],
     ) -> int:
         instance = self.instance(target.account)
         options = [
-            "--home", str(instance / "work"), "--config-home", str(instance / "config"),
-            "--cert-home", str(instance / "certificates"), "--server", PRODUCTION,
-            "--accountemail", self.email,
+            "--home",
+            str(instance / "work"),
+            "--config-home",
+            str(instance / "config"),
+            "--cert-home",
+            str(instance / "certificates"),
+            "--server",
+            PRODUCTION,
+            "--accountemail",
+            self.email,
         ]
         if operation != "issue" and algorithm.startswith("ec-"):
             options.append("--ecc")
         return self._run(
-            [str(self.engine / "acme.sh"), f"--{operation}", "--domain", identifier,
-             *options, *arguments],
-            self._environment(target), operation,
+            [
+                str(self.engine / "acme.sh"),
+                f"--{operation}",
+                "--domain",
+                identifier,
+                *options,
+                *arguments,
+            ],
+            self._environment(target),
+            operation,
         )
 
     def obtain(
-        self, target: Target, identifier: str, algorithm: str, *, issue: bool, force: bool,
+        self,
+        target: Target,
+        identifier: str,
+        algorithm: str,
+        *,
+        issue: bool,
+        force: bool,
     ) -> bool:
         self.recover_dns()
         operation = "issue" if issue else "renew"
         options = ["--always-force-new-domain-key"]
         if issue:
-            options += ["--dns", "dns_aws", "--challenge-alias", target.alias,
-                        "--keylength", LENGTHS[algorithm]]
+            options += [
+                "--dns",
+                "dns_aws",
+                "--challenge-alias",
+                target.alias,
+                "--keylength",
+                LENGTHS[algorithm],
+            ]
         if force:
             options.append("--force")
         try:
