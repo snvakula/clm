@@ -275,7 +275,9 @@ def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, c
     stage_files(tmp_path, role)
     app = tmp_path / "app"
     source = ROOT / "src" / ("server" if role == "server" else "client_linux")
-    assert {entry.name for entry in app.iterdir()} == {file.name for file in source.glob("*.py")}
+    expected_modules = {file.name for file in source.glob("*.py")}
+    assert {entry.name for entry in app.iterdir()} == expected_modules | {"LICENSE"}
+    assert (app / "LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
     assert {entry.name for entry in (tmp_path / "bin").iterdir()} == commands
     for name in commands:
         args = ["--help"] if name == "clmd" else ["version"]

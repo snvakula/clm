@@ -918,6 +918,7 @@ Suggested layout:
 clm/
 ├── pyproject.toml
 ├── README.md
+├── LICENSE
 ├── src/
 │   ├── server/
 │   └── client_linux/
