@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "clm"
 version = "1.0.0"
 description = "Self-hosted certificate lifecycle management"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["cryptography==50.0.2", "PyYAML==6.0.3", "idna==3.18"]
 

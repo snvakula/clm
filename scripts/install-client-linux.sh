@@ -34,6 +34,7 @@ package = source / "src/client_linux"
 metadata = tomllib.loads((source / "pyproject.toml").read_text())["project"]
 app = workspace / "app"
 app.mkdir()
+shutil.copyfile(source / "LICENSE", app / "LICENSE")
 for module in package.glob("*.py"):
     shutil.copyfile(module, app / module.name)
 with (app / "__init__.py").open("a") as module:

@@ -14,3 +14,7 @@ CLM uses Let's Encrypt production and Route 53 DNS-01. It uses a pinned acme.sh 
 - [Linux client guide](docs/client.md) for configuration, update hooks and scheduling.
 - [Operations guide](docs/operations.md) for security, monitoring, upgrades, backups, recovery and deployment checks.
 - [Technical specification](docs/specification.md), [implementation plan](docs/implementation-plan.md) and [development instructions](AGENTS.md).
+
+## Licence
+
+CLM is available under the [MIT Licence](LICENSE). The separately licensed acme.sh engine and its patched DNS plugin use [GNU GPL version 3](packaging/acme/LICENSE.md).
