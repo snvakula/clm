@@ -1,15 +1,20 @@
+import errno
+import io
 import logging
 import os
 import threading
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from fastapi.testclient import TestClient
 
 from client_linux.application import Client
+from client_linux.remote import Remote
 from server.certificate import MAX_FILE, parse_manifest
 from server.identity import storage_id
 from server.locking import publication_lock
+from server.repository import Repository
 from server.api import create_app
 from server.route53 import Target
 from server.service import Administration
@@ -75,6 +80,39 @@ def headers(token):
 
 def url(identifier, suffix):
     return f"/v1/certificates/{storage_id(identifier)}/{suffix}"
+
+
+@pytest.mark.parametrize("code", [401, 502, 503])
+def test_client_reports_http_status_and_operation_without_secrets(code, monkeypatch):
+    remote = Remote("https://example.com", "private-token")
+    body = io.BytesIO(b"private-response")
+
+    def reject(request, *, timeout):
+        raise HTTPError(request.full_url, code, "private-reason", {}, body)
+
+    monkeypatch.setattr(remote.opener, "open", reject)
+    with pytest.raises(ValueError, match=rf"HTTP {code}, GET /v1/certificates") as error:
+        remote.available()
+    assert "private-" not in str(error.value)
+    assert body.closed
+
+
+def test_distribution_logs_local_failure_without_exposing_details(server, monkeypatch, caplog):
+    admin, _, http = server
+    token = admin.client_change("git", "add")
+    admin.client_change("git", "grant", DOMAIN)
+
+    def unreadable(*args):
+        raise PermissionError(errno.EACCES, "private-failure", "/private/manifest.json")
+
+    monkeypatch.setattr(Repository, "manifest", unreadable)
+    response = http.get(url(DOMAIN, "manifest"), headers=headers(token))
+    assert response.status_code == 503
+    assert not response.content
+    assert response.headers["cache-control"] == "no-store"
+    assert "/v1/certificates/{api_id}/manifest (EACCES)" in caplog.text
+    assert "private-failure" not in caplog.text
+    assert token not in caplog.text
 
 
 def test_issuance_reuse_rotation_authorisation_and_leases(server):

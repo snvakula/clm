@@ -19,7 +19,8 @@ Use `clm status --json` and `clm-client status --json` for Zabbix or another mon
 |---|---|
 | Missing or ambiguous delegation | Check the exact public `_acme-challenge` CNAME for the identifier and the final target against the alias configuration. The hostname's own record is required. |
 | Route 53 or ACME failure | Check zone NS delegation, credentials and session expiry, scoped IAM and CA rate limits. Supply the original account and alias configuration if a pending cleanup requires it. Check for external writers on shared endpoints. |
-| Reverse proxy errors | Run `nginx -t`, inspect `systemctl status clmd.socket clmd.service` and check the proxy socket group. Preserve HTTPS termination and network allow rules. |
+| HTTP 502 or 504 | Inspect the Nginx error log and `systemctl status clmd.socket clmd.service`. Check the socket path and access for the Nginx worker. |
+| HTTP 503 on a CLM API endpoint | Check `journalctl -u clmd.service` for the route and failure code. For `EACCES`, check access to the SQLite database, publication lock and certificate generation as applicable to the failing endpoint. The published directories must be readable and traversable by `clm`, and published files must be readable by `clm`. |
 | Client authentication or grant fails | Confirm the client is enabled, the token is current and the certificate is granted and valid. Set the current token in `/opt/clm-client/config/client.yaml`. |
 | Client hook fails | Check the executable under `/opt/clm-client/config/hooks.d/` and the service it calls. Re-run `/opt/clm-client/bin/clm-client update` after correcting the problem. |
 | Interrupted publication | Run `clm check` to reconcile pending filesystem and database state. Inspect the existing files and use the consistent backup if reconciliation reports damage. The API reads complete versions from the database association. |

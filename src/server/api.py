@@ -1,6 +1,7 @@
 """Read-only distribution endpoints with per-request authentication and authorisation."""
 
 import argparse
+import errno
 import hmac
 import ipaddress
 import logging
@@ -64,7 +65,16 @@ def create_app(root: Path) -> FastAPI:
     async def no_store(request: Request, call_next) -> Response:
         try:
             response = await call_next(request)
-        except (OSError, sqlite3.Error, ValueError):
+        except (OSError, sqlite3.Error, ValueError) as error:
+            route = request.scope.get("route")
+            reason = type(error).__name__
+            if isinstance(error, OSError):
+                reason = errno.errorcode.get(error.errno, reason)
+            elif isinstance(error, sqlite3.Error):
+                reason = getattr(error, "sqlite_errorname", reason)
+            logger.error(
+                "Distribution request failed for %s (%s)", getattr(route, "path", "-"), reason
+            )
             response = Response(status_code=503)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"

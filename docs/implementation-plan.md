@@ -16,7 +16,7 @@ CLM 1.0.0 implements the [technical specification](specification.md).
 ## Verification
 
 - The automated suite covers authenticated downloads, certificate validation, secret and filesystem permissions, publication and recovery, client hooks, the pinned acme.sh patch and Nginx configuration.
-- All 68 tests passed on Debian 13. On Alpine 3.23, a clean client installation and a repeat installation passed using the hash-locked musl wheels. The installed client validated and published a test certificate downloaded over local HTTPS.
+- All 72 tests passed on Debian 13, including HTTP failure diagnostics without exposing tokens or internal error details. On Alpine 3.23, a clean client installation and a repeat installation passed using the hash-locked musl wheels. The installed client validated and published a test certificate downloaded over local HTTPS.
 - Ruff, ShellCheck and dependency audits run in CI. Production credentials are excluded from automated testing.
 - Deployment checks include repeat installation with a live systemd, local scheduling for clients without systemd, server account isolation under deployment credentials and restoration from a backup.
 
