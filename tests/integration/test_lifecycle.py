@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from clm_client_debian.application import Client
-from clm_server.certificate import MAX_FILE, parse_manifest
-from clm_server.identity import storage_id
-from clm_server.locking import publication_lock
-from clm_server.api import create_app
-from clm_server.route53 import Target
-from clm_server.service import Administration
+from client_linux.application import Client
+from server.certificate import MAX_FILE, parse_manifest
+from server.identity import storage_id
+from server.locking import publication_lock
+from server.api import create_app
+from server.route53 import Target
+from server.service import Administration
 
 DOMAIN = "git.example.com"
 WILDCARD = "*.example.com"
@@ -127,7 +127,16 @@ def test_issuance_reuse_rotation_authorisation_and_leases(server):
         == 404
     )
     assert http.post("/v1/health").status_code == 405
-    assert (admin.repo.files.directory(WILDCARD, 2) / "privkey.pem").stat().st_mode & 0o777 == 0o640
+    generation = admin.repo.files.directory(WILDCARD, 2)
+    owner = admin.repo.files.root.stat()
+    for directory in (generation, generation.parent, admin.repo.files.base(WILDCARD)):
+        info = directory.stat()
+        assert info.st_mode & 0o7777 == 0o700
+        assert (info.st_uid, info.st_gid) == (owner.st_uid, owner.st_gid)
+    for path in generation.iterdir():
+        info = path.stat()
+        assert info.st_mode & 0o7777 == 0o600
+        assert (info.st_uid, info.st_gid) == (owner.st_uid, owner.st_gid)
     assert git.encode() not in admin.db.path.read_bytes()
 
 
@@ -235,7 +244,7 @@ def installed(tmp_path, pki, server, monkeypatch):
     config.chmod(0o600)
     client = Client(root, logging.getLogger("test-client"), trust=pki[0])
     remote = TestRemote(http, token)
-    from clm_client_debian import application
+    from client_linux import application
 
     def connect(server, supplied, *, timeout):
         assert server == "https://clm.example.com" and supplied == token and timeout == 20
@@ -259,9 +268,9 @@ def test_install_idempotency_update_and_unavailable_server(server, installed):
     generation = client.files.directory(DOMAIN, 1)
     assert Path(info["private_key_path"]).resolve() == generation / "privkey.pem"
     for directory in (generation, generation.parent, client.files.base(DOMAIN)):
-        assert directory.stat().st_mode & 0o777 == 0o750
+        assert directory.stat().st_mode & 0o777 == 0o700
     for path in generation.iterdir():
-        assert path.stat().st_mode & 0o777 == 0o640
+        assert path.stat().st_mode & 0o777 == 0o600
     client.update(state)
     assert remote.downloads == 1
     admin.obtain(DOMAIN, "renew")
@@ -356,7 +365,7 @@ def test_client_recovers_killed_update(installed):
             DOMAIN: {"old": 1, "new": 2, "services": ["nginx"]},
         },
     }
-    from clm_server.certificate import FILES
+    from server.certificate import FILES
 
     version = client.files.directory(DOMAIN, 1)
     client.files.stage(DOMAIN, 2, {name: (version / name).read_bytes() for name in FILES})
@@ -418,7 +427,7 @@ def test_listener_accepts_inherited_unix_socket(server):
         args = [
             sys.executable,
             "-c",
-            "from clm_server.api import main; main()",
+            "from server.api import main; main()",
             "--root",
             str(admin.root),
             "--fd",
@@ -444,8 +453,8 @@ def test_listener_accepts_inherited_unix_socket(server):
 
 
 def test_client_rejects_bundle_checksum_mismatch(server, installed):
-    from clm_client_debian.certificate import unpack_bundle
-    from clm_server.certificate import make_bundle
+    from client_linux.certificate import unpack_bundle
+    from server.certificate import make_bundle
 
     admin, _, _ = server
     client, remote, state = installed
@@ -480,7 +489,7 @@ def test_server_cli_status_and_client_listing_keep_json_optional(server, caplog)
     command = [
         sys.executable,
         "-c",
-        "from clm_server.cli import main; raise SystemExit(main())",
+        "from server.cli import main; raise SystemExit(main())",
         "--root",
         str(admin.root),
     ]
@@ -510,7 +519,7 @@ def test_server_cli_status_and_client_listing_keep_json_optional(server, caplog)
 def test_client_cli_status_supports_readable_and_json_output(installed, capsys):
     import json
 
-    from clm_client_debian.cli import arguments, dispatch
+    from client_linux.cli import arguments, dispatch
 
     client, _, _ = installed
     parser = arguments()
@@ -536,7 +545,7 @@ def test_client_rejects_a_config_readable_by_other_users(installed):
 
 
 def test_renewal_not_due_finishes_without_exporting(server, monkeypatch, caplog):
-    from clm_server.cli import dispatch, parser
+    from server.cli import dispatch, parser
 
     admin, engine, _ = server
     admin.obtain(WILDCARD, "issue")

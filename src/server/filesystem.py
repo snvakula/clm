@@ -14,10 +14,14 @@ def sync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def write_atomic(path: Path, content: bytes, mode: int = 0o600) -> None:
+def write_atomic(
+    path: Path, content: bytes, mode: int = 0o600, *, owner: tuple[int, int] | None = None
+) -> None:
     descriptor, name = tempfile.mkstemp(prefix=".write-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "wb") as stream:
+            if owner is not None:
+                os.fchown(stream.fileno(), *owner)
             os.fchmod(stream.fileno(), mode)
             stream.write(content)
             stream.flush()

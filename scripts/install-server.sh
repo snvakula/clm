@@ -25,7 +25,7 @@ import tomllib
 from pathlib import Path
 
 source, workspace, interpreter = map(Path, sys.argv[1:])
-package = source / "src/clm_server"
+package = source / "src/server"
 metadata = tomllib.loads((source / "pyproject.toml").read_text())["project"]
 app = workspace / "app"
 app.mkdir()
@@ -105,6 +105,12 @@ configure_server_identity() {
     fi
 }
 
+install_server_certificate_storage() {
+    local root=$1 owner=$2 group=$3
+    install -d -m 0700 -o "$owner" -g "$group" "$root/data/certificates"
+    chmod 00700 "$root/data/certificates"
+}
+
 install_server_units() {
     local sources=$1 root=$2 system_units=$3 unit
     install -d -m 0755 "$root/systemd"
@@ -156,7 +162,8 @@ install_server() {
 
     configure_server_identity "$root"
     install -d -m 3770 -o root -g clm "$root/data"
-    install -d -m 2750 -o root -g clm "$root/data/certificates" "$root/logs"
+    install_server_certificate_storage "$root" clm clm
+    install -d -m 2750 -o root -g clm "$root/logs"
     install -d -m 0700 "$root/acme" "$root/acme/instances"
     install_server_configuration "$sources" "$root/config" /etc/nginx/sites-available/clm
     keep_file 0640 clm /dev/null "$root/run/publication.lock"

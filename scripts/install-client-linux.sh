@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 keep_configuration() {
     local mode=$1 source=$2 target=$3
@@ -9,13 +9,8 @@ keep_configuration() {
 
 install_client_storage() {
     local root=$1
-    install -d -m 0750 "$root/certificates"
-    install -d -m 0700 "$root/data" "$root/logs"
-    find -H "$root/certificates" \
-        -type d -name '.stage-*' -prune -o \
-        -type d -exec chmod 00750 -- {} + -o \
-        -type f \( -name cert.pem -o -name chain.pem -o -name fullchain.pem \
-            -o -name privkey.pem -o -name manifest.json \) -exec chmod 0640 -- {} +
+    install -d -m 0700 "$root/certificates" "$root/data" "$root/logs"
+    chmod 00700 "$root/certificates"
 }
 
 install_client_configuration() {
@@ -35,7 +30,7 @@ import tomllib
 from pathlib import Path
 
 source, workspace, interpreter = map(Path, sys.argv[1:])
-package = source / "src/clm_client_debian"
+package = source / "src/client_linux"
 metadata = tomllib.loads((source / "pyproject.toml").read_text())["project"]
 app = workspace / "app"
 app.mkdir()
@@ -60,7 +55,8 @@ PYTHON
 prepare_client_environment() {
     local sources=$1 root=$2 workspace=$3
     local environment="$root/venv" site_packages
-    if [[ ! -f $environment/pyvenv.cfg ]]; then
+    if [[ ! -x $environment/bin/python ]] ||
+        ! "$environment/bin/python" -m pip --version >/dev/null 2>&1; then
         python3 -m venv "$environment"
     fi
     "$environment/bin/python" -m pip --disable-pip-version-check install \
@@ -106,35 +102,51 @@ install_client_units() {
     systemctl enable --now clm-client-update.timer
 }
 
+check_client_dependencies() {
+    local tool
+    for tool in python3 openssl flock install mktemp stat mv ln; do
+        if ! command -v "$tool" >/dev/null; then
+            printf 'Required command is missing: %s\n' "$tool" >&2
+            return 1
+        fi
+    done
+    python3 - <<'PY'
+import ssl
+import sys
+
+if sys.platform != "linux" or sys.version_info < (3, 11):
+    raise SystemExit("The CLM client requires Linux and Python 3.11 or later.")
+try:
+    import ensurepip
+    import venv
+except ImportError:
+    raise SystemExit("Install Python virtual environment support with ensurepip.") from None
+trust = ssl.get_default_verify_paths()
+if not trust.cafile and not trust.capath:
+    raise SystemExit("Install a system CA trust store before installing the CLM client.")
+PY
+    openssl version >/dev/null
+}
+
 install_client() {
     set -euo pipefail
     umask 077
     local root=/opt/clm-client sources
     if (($#)); then
-        echo 'Run install-client-debian.sh without arguments.' >&2
+        echo 'Run install-client-linux.sh without arguments.' >&2
         exit 2
     fi
     if [[ $EUID != 0 ]]; then
         echo 'Run the installer as root.' >&2
         exit 1
     fi
-    # shellcheck source=/dev/null
-    . /etc/os-release
-    if [[ $ID != debian || $VERSION_ID != 13 ]]; then
-        echo 'This installer requires Debian 13.' >&2
-        exit 1
-    fi
+    check_client_dependencies
     if [[ -L $root || (-e $root && $(stat -c %u -- "$root") != 0) ]]; then
         echo 'The application directory must be owned by root and may not be a symbolic link.' >&2
         exit 1
     fi
 
     sources=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        python3 python3-venv ca-certificates openssl logrotate
-
     install -d -m 0755 "$root" "$root/bin" "$root/venv"
     install -d -m 0711 "$root/run"
     install -d -m 0700 "$root/config"
@@ -149,14 +161,18 @@ install_client() {
     install_client_storage "$root"
     install_client_configuration "$sources" "$root/config"
     prepare_client_environment "$sources" "$root" "$workspace"
-    install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client
+    if command -v logrotate >/dev/null && [[ -d /etc/logrotate.d ]]; then
+        install -m 0644 "$sources/packaging/logrotate/clm-client" /etc/logrotate.d/clm-client
+    fi
     publish_application "$root/app" "$workspace"
     install -m 0755 -- "$workspace/bin/clm-client" "$root/bin/clm-client"
     (umask 022; mkdir -p /usr/local/bin)
     install_cli_link /usr/local/bin/clm-client "$root/bin/clm-client"
     flock -u 8
-    install_client_units "$sources" "$root" /etc/systemd/system
-    echo 'Installed CLM Debian client. Configuration directory /opt/clm-client/config.'
+    if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null; then
+        install_client_units "$sources" "$root" /etc/systemd/system
+    fi
+    echo 'Installed CLM Linux client. Configuration directory /opt/clm-client/config.'
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

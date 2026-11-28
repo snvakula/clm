@@ -12,10 +12,8 @@ from .identity import storage_path
 
 
 class Generations:
-    def __init__(self, root: Path, *, shared: bool = False) -> None:
+    def __init__(self, root: Path) -> None:
         self.root = root
-        self.directory_mode = 0o2750 if shared else 0o700
-        self.file_mode = 0o640 if shared else 0o600
 
     def base(self, identifier: str) -> Path:
         return self.root.joinpath(*storage_path(identifier))
@@ -23,31 +21,39 @@ class Generations:
     def directory(self, identifier: str, version: int) -> Path:
         return self.base(identifier) / "versions" / f"{version:06d}"
 
-    def _mkdir(self, path: Path) -> None:
+    def _mkdir(self, path: Path, owner: tuple[int, int] | None) -> None:
         if path == self.root:
             return
-        self._mkdir(path.parent)
+        self._mkdir(path.parent, owner)
         try:
             path.mkdir(mode=0o700)
         except FileExistsError:
             if path.is_symlink() or not path.is_dir():
                 raise
         else:
-            path.chmod(self.directory_mode)
+            if owner is not None:
+                os.chown(path, *owner)
+            path.chmod(0o700)
             sync_directory(path.parent)
 
     def stage(self, identifier: str, version: int, files: dict[str, bytes]) -> None:
         if set(files) != set(FILES):
             raise ValueError("Unexpected generation files")
+        # Inherit the repository owner's access without granting group access.
+        info = self.root.stat()
+        repository_owner = (info.st_uid, info.st_gid)
+        owner = repository_owner if repository_owner != (os.geteuid(), os.getegid()) else None
         target = self.directory(identifier, version)
-        self._mkdir(target.parent)
+        self._mkdir(target.parent, owner)
         temporary = Path(tempfile.mkdtemp(prefix=".stage-", dir=target.parent))
         try:
             for name, data in files.items():
-                write_atomic(temporary / name, data, self.file_mode)
-            temporary.chmod(self.directory_mode)
+                write_atomic(temporary / name, data, owner=owner)
             if target.exists():
                 raise FileExistsError("Certificate generation already exists")
+            if owner is not None:
+                os.chown(temporary, *owner)
+                sync_directory(temporary)
             os.rename(temporary, target)
             sync_directory(target.parent)
         finally:

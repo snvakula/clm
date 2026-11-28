@@ -13,10 +13,10 @@ from .database import Database, audit, now
 
 
 class Repository:
-    def __init__(self, root: Path, *, trust: Path = TRUST, shared: bool = True) -> None:
+    def __init__(self, root: Path, *, trust: Path = TRUST) -> None:
         self.root = root
         self.db = Database(root / "data/clm.db")
-        self.files = Generations(root / "data/certificates", shared=shared)
+        self.files = Generations(root / "data/certificates")
         self.lock = root / "run/publication.lock"
         self.trust = trust
 

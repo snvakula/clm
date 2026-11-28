@@ -4,9 +4,9 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-from clm_server import dns_records
-from clm_server.acme import PRODUCTION, Acme
-from clm_server.route53 import Route53, Target
+from server import dns_records
+from server.acme import PRODUCTION, Acme
+from server.route53 import Route53, Target
 
 RECORD = "_acme-challenge.acme.example.com"
 VALUE = "X" * 43

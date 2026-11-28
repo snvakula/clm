@@ -10,7 +10,6 @@ from typing import Any
 from .certificate import (
     MAX_FILE,
     PEMS,
-    TRUST,
     json_bytes,
     parse_manifest,
     read_material,
@@ -27,7 +26,7 @@ from .remote import Remote
 
 
 class Client:
-    def __init__(self, root: Path, logger: logging.Logger, *, trust: Path = TRUST) -> None:
+    def __init__(self, root: Path, logger: logging.Logger, *, trust: Path | None = None) -> None:
         self.root = root
         self.trust = trust
         self.logger = logger

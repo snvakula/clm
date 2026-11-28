@@ -18,7 +18,7 @@ jobs:
       - run: python -m pip install '.[server,dev]'
       - run: ruff check .
       - run: ruff format --check .
-      - run: shellcheck scripts/*.sh packaging/acme/recover-dns.sh src/clm_client_bash/clm-client-bash examples/client-bash/restart-web-servers
+      - run: shellcheck scripts/*.sh packaging/acme/recover-dns.sh examples/client/hooks.d/restart-web-servers
       - name: Verify the pinned upstream ACME source
         run: |
           archive="$RUNNER_TEMP/acme-source.tar.gz"
@@ -28,8 +28,6 @@ jobs:
           printf '%s  %s\n' 22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc \
             "$archive" | sha256sum --check --status
           printf 'CLM_TEST_ACME_ARCHIVE=%s\n' "$archive" >> "$GITHUB_ENV"
-      - name: Check Bash client test dependencies
-        run: command -v bash curl jq openssl unzip flock
       - run: pytest -q
       - run: python -m pip check
 

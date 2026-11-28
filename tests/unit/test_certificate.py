@@ -6,14 +6,14 @@ from pathlib import Path
 import pytest
 from cryptography import x509
 
-from clm_client_debian.certificate import unpack_bundle
-from clm_server.certificate import (
+from client_linux.certificate import unpack_bundle
+from server.certificate import (
     json_bytes,
     make_bundle,
     parse_manifest,
     validate,
 )
-from clm_server.filesystem import read_regular
+from server.filesystem import read_regular
 
 
 @pytest.mark.parametrize("name", ["example.com", "*.example.com"])
@@ -77,3 +77,27 @@ def test_manifest_rejects_ambiguous_types(pki, tmp_path):
             parse_manifest(json_bytes({**manifest, key: value}), name)
     with pytest.raises(ValueError):
         parse_manifest(b'{"version":1,"version":2}', name)
+
+
+def test_linux_client_verifies_with_host_openssl_and_trust_store(tmp_path, pki, monkeypatch):
+    import shutil
+
+    from client_linux.certificate import validate as validate_client
+
+    trust, material = pki
+    openssl = shutil.which("openssl")
+    assert openssl
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    shutil.copy2(openssl, tools / "openssl")
+    monkeypatch.setenv("PATH", str(tools))
+    monkeypatch.setenv("SSL_CERT_FILE", str(trust))
+    name = "*.example.com"
+
+    pem = material(name)
+    result = validate_client(name, 1, pem, tmp_path)
+    assert result["certificate_id"] == name
+
+    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "missing.pem"))
+    with pytest.raises(ValueError, match="not trusted"):
+        validate_client(name, 1, pem, tmp_path)
