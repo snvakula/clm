@@ -17,8 +17,6 @@ install_client_configuration() {
     local sources=$1 config=$2
     install -d -m 0700 "$config/hooks.d"
     keep_configuration 0600 "$sources/examples/client/client.yaml" "$config/client.yaml"
-    keep_configuration 0700 "$sources/examples/client/hooks.d/restart-web-servers" \
-        "$config/hooks.d/restart-web-servers"
 }
 
 stage_client_files() {

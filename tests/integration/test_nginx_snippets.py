@@ -35,13 +35,14 @@ def activate(root, identifier, number):
 def test_snippets_have_stable_paths_for_exact_wildcard_and_long_names(hook, tmp_path):
     root = tmp_path / "client"
     snippets = tmp_path / "nginx/snippets/clm"
-    long_identifier = ".".join(["a" * 63] * 3 + ["b" * 61])
-    long_snippet = f"_sha256-{hashlib.sha256(long_identifier.encode()).hexdigest()}.conf"
+    longest_named_domain = ".".join(["a" * 63] * 3 + ["b" * 58])
+    long_domain = longest_named_domain + "b"
+    long_snippet = f"_sha256-{hashlib.sha256(long_domain.encode()).hexdigest()}.conf"
     expected = {
         "example.com": "example.com.conf",
-        "wildcard.example.com": "wildcard.example.com.conf",
-        "*.example.com": "_wildcard.example.com.conf",
-        long_identifier: long_snippet,
+        "*.wildcard.example.com": "wildcard.example.com.conf",
+        longest_named_domain: longest_named_domain + ".conf",
+        "*." + long_domain: long_snippet,
     }
     paths = {identifier: activate(root, identifier, 1) for identifier in expected}
     hook(root, snippets, list(expected), rollback=False)
@@ -60,6 +61,32 @@ def test_snippets_have_stable_paths_for_exact_wildcard_and_long_names(hook, tmp_
         hook(root, snippets, [identifier], rollback=False)
         assert path.stat().st_ino == original_inode
         assert path.read_text() == content
+
+
+def test_wildcard_takes_precedence_for_either_event_and_rollback_restores_exact(hook, tmp_path):
+    root = tmp_path / "client"
+    snippets = tmp_path / "nginx/snippets/clm"
+    domain = "example.com"
+    wildcard = "*." + domain
+    exact_active = activate(root, domain, 1)
+    hook(root, snippets, [domain], rollback=False)
+    snippet = snippets / "example.com.conf"
+    exact_content = snippet.read_text()
+    assert str(exact_active) in exact_content
+
+    wildcard_active = activate(root, wildcard, 1)
+    hook(root, snippets, [wildcard, domain], rollback=False)
+    wildcard_content = snippet.read_text()
+    assert str(wildcard_active) in wildcard_content
+    assert list(snippets.iterdir()) == [snippet]
+
+    activate(root, domain, 2)
+    hook(root, snippets, [domain], rollback=False)
+    assert snippet.read_text() == wildcard_content
+
+    wildcard_active.unlink()
+    hook(root, snippets, [wildcard], rollback=True)
+    assert snippet.read_text() == exact_content
 
 
 def test_rollback_removes_only_generated_snippets_without_an_active_certificate(hook, tmp_path):
@@ -92,7 +119,7 @@ def test_nginx_loads_the_generated_snippet(hook, tmp_path, pki):
     if nginx is None:
         pytest.skip("Nginx is required to validate a generated snippet")
     root = tmp_path / "client"
-    snippets = tmp_path / "snippets"
+    snippets = tmp_path / "snippets/clm"
     identifier = "example.com"
     active = activate(root, identifier, 1)
     _, material = pki
@@ -108,6 +135,6 @@ def test_nginx_loads_the_generated_snippet(hook, tmp_path, pki):
     config.write_text(
         f"pid {tmp_path / 'nginx.pid'}; error_log stderr; events {{}} "
         f"http {{ {temp_paths} access_log off; "
-        f"server {{ listen 18443 ssl; include {snippets / 'example.com.conf'}; }} }}"
+        "server { listen 18443 ssl; include snippets/clm/example.com.conf; } }"
     )
     subprocess.run([nginx, "-t", "-p", str(tmp_path), "-c", str(config)], check=True)

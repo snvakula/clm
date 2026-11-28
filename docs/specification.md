@@ -761,7 +761,7 @@ A failed download, validation, activation or hook returns a non-zero exit code. 
 
 The client runs executable scripts from `/opt/clm-client/config/hooks.d/` in filename order after a batch changes certificate material. Hooks are owned by the local CLM client account and protected from modification by other accounts. Each script has an execution timeout. The hook environment provides the batch's changed identifiers and event. If the update is rolled back, attempted hooks receive a rollback event after the previous certificate links are restored.
 
-The installed `restart-web-servers` example in the hooks directory restarts running Apache and Nginx units if present. The client publishes certificate files and executes local hooks. Other service configuration is managed by the operator.
+The operator can enable the `restart-web-servers` example to restart running Apache and Nginx services. The optional `nginx-snippets` example writes certificate paths by domain and selects the wildcard certificate when both forms are active. The installer creates the hooks directory. Operators copy in any example hooks they want to enable.
 
 ## 18. Automatic renewal and updates
 
