@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+shopt -s nullglob
+umask 077
+export LC_ALL=C
+unset BASH_ENV ENV ZIPINFO ZIPINFOOPT UNZIP UNZIPOPT
+
+readonly VERSION=1.0.0
+readonly ROOT="${CLM_BASH_ROOT:-/opt/clm-client-bash}"
+readonly STORE="$ROOT/certificates"
+readonly DATA="$ROOT/data"
+readonly TX="$STORE/.transaction"
+readonly DONE="$STORE/.committed"
+readonly PEM=(cert.pem chain.pem fullchain.pem privkey.pem)
+
+fail() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+required_tools() {
+    local tool
+    for tool in curl jq openssl unzip flock timeout install stat sync date base64 sha256sum; do
+        command -v "$tool" >/dev/null || fail "Required tool is missing: $tool"
+    done
+}
+
+trusted() {
+    local path=$1 mode
+    [[ ! -L $path && $(stat -c %u -- "$path") == "$EUID" ]] || return 1
+    mode=$(stat -c %a -- "$path")
+    (( (8#$mode & $2) == 0 ))
+}
+
+read_configuration() {
+    local config="$ROOT/config/client.conf" line
+    if [[ ! -f $config ]] || ! trusted "$config" 077; then
+        fail 'Protect client.conf with mode 0600.'
+    fi
+    unset server token
+    while IFS= read -r line || [[ -n $line ]]; do
+        case "$line" in
+            ''|'#'*) ;;
+            server=*) [[ ! -v server ]] || fail 'Duplicate server setting.'; server=${line#*=} ;;
+            token=*) [[ ! -v token ]] || fail 'Duplicate token setting.'; token=${line#*=} ;;
+            *) fail 'Invalid setting in client.conf.' ;;
+        esac
+    done < "$config"
+    local pattern='^https://([a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])(:[0-9]{1,5})?(/v1)?/?$'
+    [[ ${server:-} =~ $pattern ]] || fail 'Set an HTTPS server URL in client.conf.'
+    [[ ${token:-} =~ ^[A-Za-z0-9_-]{43}$ ]] || fail 'Set a valid token in client.conf.'
+    server=${server%/}
+    server=${server%/v1}/v1
+}
+
+get() {
+    local path=$1 destination=$2 maximum=$3 code
+    code=$(
+        ulimit -f "$((maximum / 1024))"
+        printf 'Authorization: Bearer %s\n' "$token" |
+            curl --disable --silent --show-error --globoff --noproxy '*' --proto '=https' \
+                --tlsv1.2 --max-time 30 --max-filesize "$maximum" --header @- \
+                --output "$destination" --write-out '%{http_code}' -- "$server$path"
+    ) || fail 'Could not fetch a bounded response securely from the CLM server.'
+    case "$code" in
+        200) ;;
+        401) fail 'CLM server rejected the client credentials.' ;;
+        403) fail 'CLM server denied access.' ;;
+        404) fail 'Certificate or generation is unavailable.' ;;
+        429) fail 'CLM server rate limited the request.' ;;
+        *) fail "CLM server returned HTTP $code." ;;
+    esac
+}
+
+identifier_valid() {
+    local dns=${1#\*.}
+    local label='[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+    [[ ${#dns} -le 253 && $dns =~ ^$label(\.$label)+$ && ${dns##*.} =~ [a-z] ]]
+}
+
+storage_key() {
+    printf '%s' "$1" | base64 -w 0 | tr '/+' '_-' | tr -d '='
+}
+
+storage_base() {
+    if (( ${#1} > 250 )); then
+        printf '%s/.long/%s/%s\n' "$STORE" "${1:0:200}" "${1:200}"
+    else
+        printf '%s/%s\n' "$STORE" "$1"
+    fi
+}
+
+generation() {
+    printf '%06d\n' "$1"
+}
+
+manifest() {
+    jq -cesS --arg id "$2" '
+        select(length == 1) | .[0]
+        | select(keys == ["certificate_id","files","issuer","key_algorithm","key_size",
+                        "not_after","not_before","schema_version","serial","version"])
+        | select(.schema_version == 1 and .certificate_id == $id)
+        | select(.version | type == "number" and . == floor and . >= 1 and . <= 9007199254740991)
+        | select(.serial | type == "string" and test("^[A-F0-9]+$"))
+        | select(.issuer | type == "string")
+        | select([.not_before,.not_after] | all(type == "string" and
+            test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")))
+        | select([.key_algorithm,.key_size] as $key |
+            [["ECDSA",256],["ECDSA",384],["RSA",2048],["RSA",3072],["RSA",4096]] |
+            any(.[]; . == $key))
+        | select(.files | keys == ["cert.pem","chain.pem","fullchain.pem","privkey.pem"])
+        | select(.files | all(.[]; keys == ["sha256"] and
+            (.sha256 | type == "string" and test("^[a-f0-9]{64}$"))))
+    ' "$1"
+}
+
+unpack() {
+    local archive=$1 target=$2 name members
+    members=$(unzip -Z -1 "$archive" | sort) || fail 'Invalid certificate ZIP archive.'
+    [[ $members == $'cert.pem\nchain.pem\nfullchain.pem\nmanifest.json\nprivkey.pem' ]] ||
+        fail 'Unexpected files in certificate ZIP archive.'
+    for name in "${PEM[@]}" manifest.json; do
+        (ulimit -f 64; unzip -p "$archive" "$name") > "$target/$name" ||
+            fail 'Invalid or oversized certificate ZIP member.'
+    done
+}
+
+split_certificates() {
+    local source=$1 target=$2
+    awk -v target="$target" '
+        { sub(/\r$/, "") }
+        /^[[:space:]]*$/ { next }
+        $0 == "-----BEGIN CERTIFICATE-----" && !inside {
+            inside = 1
+            file = sprintf("%s.%04d", target, ++count)
+            print > file
+            next
+        }
+        $0 == "-----END CERTIFICATE-----" && inside {
+            print > file
+            close(file)
+            inside = 0
+            next
+        }
+        inside && /^[A-Za-z0-9+\/=]+$/ { print > file; next }
+        { exit 1 }
+        END { if (inside) exit 1 }
+    ' "$source"
+}
+
+cert_fingerprint() {
+    openssl x509 -in "$1" -outform DER | sha256sum
+}
+
+private_key_pem() {
+    awk '
+        { sub(/\r$/, "") }
+        /^[[:space:]]*$/ { next }
+        state == 0 && /^-----BEGIN (EC |RSA )?PRIVATE KEY-----$/ {
+            ending = $0
+            sub(/BEGIN/, "END", ending)
+            state = 1
+            next
+        }
+        state == 1 && $0 == ending { state = 2; next }
+        state == 1 && /^[A-Za-z0-9+\/=]+$/ { next }
+        { invalid = 1; exit }
+        END { if (invalid || state != 2) exit 1 }
+    ' "$1"
+}
+
+validate_material() {
+    local path=$1 id=$2 expected=$3 name digest serial dates san a b key_info algorithm size
+    local leaf="$path/cert.pem" chain="$path/chain.pem"
+    local work="$TX/validation"
+    local -a linked full leaves verify
+    for name in "${PEM[@]}"; do
+        [[ -f $path/$name && ! -L $path/$name && $(stat -c %s -- "$path/$name") -le 65536 ]] ||
+            fail 'Invalid certificate files.'
+        digest=$(sha256sum < "$path/$name")
+        [[ ${digest%% *} == "$(jq -r --arg name "$name" '.files[$name].sha256' <<< "$expected")" ]] ||
+            fail "Checksum verification failed for $name."
+    done
+    mkdir -- "$work"
+    split_certificates "$leaf" "$work/leaf"
+    split_certificates "$chain" "$work/chain"
+    split_certificates "$path/fullchain.pem" "$work/full"
+    leaves=("$work"/leaf.*)
+    linked=("${leaves[@]}" "$work"/chain.*)
+    full=("$work"/full.*)
+    (( ${#leaves[@]} == 1 && ${#full[@]} == ${#linked[@]} )) ||
+        fail 'Full chain must contain the leaf followed by its intermediates.'
+    local index left right
+    for ((index=0; index<${#linked[@]}; index++)); do
+        left=$(cert_fingerprint "${linked[index]}")
+        right=$(cert_fingerprint "${full[index]}")
+        [[ $left == "$right" ]] || fail 'Full chain has an unexpected certificate or order.'
+        if (( index + 1 < ${#linked[@]} )); then
+            openssl verify -partial_chain -trusted "${linked[index+1]}" "${linked[index]}" >/dev/null ||
+                fail 'Invalid intermediate signature.'
+        fi
+    done
+    verify=(openssl verify -purpose sslserver)
+    [[ ! -s $chain ]] || verify+=(-untrusted "$chain")
+    "${verify[@]}" "$leaf" >/dev/null || fail 'Certificate chain is not trusted for TLS server use.'
+    san=$(openssl x509 -in "$leaf" -noout -ext subjectAltName | tail -n +2 | sed 's/^[[:space:]]*//')
+    [[ ${san,,} == "dns:$id" ]] || fail 'Certificate must contain exactly the requested DNS SAN.'
+    private_key_pem "$path/privkey.pem" || fail 'Invalid private key PEM.'
+    a=$(openssl x509 -in "$leaf" -pubkey -noout)
+    b=$(openssl pkey -in "$path/privkey.pem" -passin pass: -pubout)
+    [[ $a == "$b" ]] || fail 'Private key does not match the certificate.'
+    key_info=$(openssl pkey -pubin -text_pub -noout <<< "$a")
+    if [[ $key_info == *'ASN1 OID: prime256v1'* || $key_info == *'ASN1 OID: secp384r1'* ]]; then
+        algorithm=ECDSA
+    elif [[ $key_info == *'Modulus:'* ]]; then
+        algorithm=RSA
+    else
+        fail 'Unsupported private key algorithm.'
+    fi
+    [[ $key_info =~ \(([0-9]+)\ bit\) ]] || fail 'Invalid private key size.'
+    size=${BASH_REMATCH[1]}
+    serial=$(openssl x509 -in "$leaf" -noout -serial)
+    serial=${serial#serial=}
+    while [[ $serial == 0?* ]]; do serial=${serial#0}; done
+    dates=$(openssl x509 -in "$leaf" -noout -startdate -enddate)
+    a=${dates%%$'\n'*}
+    a=$(date -u -d "${a#notBefore=}" '+%Y-%m-%dT%H:%M:%SZ')
+    b=$(date -u -d "${dates##*notAfter=}" '+%Y-%m-%dT%H:%M:%SZ')
+    jq -e --arg serial "$serial" --arg begin "$a" --arg end "$b" --arg algorithm "$algorithm" \
+        --argjson size "$size" '
+        .serial == $serial and .not_before == $begin and .not_after == $end and
+        .key_algorithm == $algorithm and .key_size == $size
+    ' <<< "$expected" >/dev/null || fail 'Certificate metadata does not match its manifest.'
+    rm -r -- "$work"
+}
+
+current_generation() {
+    local base=$1 link
+    if [[ -L $base/current ]]; then
+        link=$(readlink -- "$base/current")
+        [[ $link =~ ^versions/[0-9]{6,16}$ && ! -L $base/$link && -d $base/$link ]] ||
+            fail 'Invalid local certificate link.'
+        printf '%s\n' "${link#versions/}"
+    elif [[ -e $base/current ]]; then
+        fail 'Invalid local certificate link.'
+    else
+        printf '%s\n' '-'
+    fi
+}
+
+ensure_base() {
+    local base=$1
+    if [[ $base == "$STORE"/.long/* ]]; then
+        install -d -m 0750 -- "$STORE/.long" "${base%/*}"
+    fi
+    install -d -m 0750 -- "$base" "$base/versions"
+}
+
+activate() {
+    local base=$1 number=$2
+    if [[ $number == - ]]; then
+        rm -f -- "$base/current" "$base/.next"
+    else
+        ln -sfnT -- "versions/$number" "$base/.next"
+        mv -Tf -- "$base/.next" "$base/current"
+    fi
+}
+
+run_hook() {
+    local name=$1 event=$2 path="$ROOT/config/hooks.d/$1" ids
+    if [[ ! $name =~ ^[a-zA-Z0-9._-]+$ || ! -f $path ]] || ! trusted "$path" 022; then
+        fail 'Unsafe certificate hook.'
+    fi
+    ids=$(<"$TX/updated")
+    printf 'Running certificate hook %s (%s).\n' "$name" "$event"
+    (
+        cd -- "$ROOT"
+        exec 9>&-
+        env -i PATH="$PATH" CLM_CLIENT_ROOT="$ROOT" CLM_HOOK_EVENT="$event" \
+            CLM_UPDATED_CERTIFICATES="$ids" timeout -k 5 120 "$path" </dev/null >/dev/null 2>&1
+    ) || fail "Certificate hook $name failed during $event."
+}
+
+tidy_committed() {
+    local id key old new base directory
+    [[ -d $DONE ]] || return 0
+    while IFS='|' read -r id key old new; do
+        base=$(storage_base "$key")
+        for directory in "$base"/versions/*; do
+            if [[ ${directory##*/} =~ ^[0-9]{6,16}$ &&
+                ${directory##*/} != "$old" && ${directory##*/} != "$new" ]]; then
+                rm -r -- "$directory"
+            fi
+        done
+    done < "$DONE/plan"
+    mv -T -- "$DONE" "$DONE.finished"
+    sync -f "$STORE"
+    rm -r -- "$DONE.finished"
+}
+
+recover() {
+    local id key old new base hook
+    [[ -d $TX ]] || return 0
+    if [[ -f $TX/plan ]]; then
+        while IFS='|' read -r id key old new; do
+            base=$(storage_base "$key")
+            if [[ -d $base ]]; then
+                activate "$base" "$old"
+                rm -rf -- "$base/versions/$new"
+            fi
+        done < "$TX/plan"
+        sync -f "$STORE"
+    fi
+    if [[ -f $TX/hooks ]]; then
+        while IFS= read -r hook; do run_hook "$hook" rollback; done < "$TX/hooks"
+    fi
+    mv -T -- "$TX" "$TX.finished"
+    sync -f "$STORE"
+    rm -r -- "$TX.finished"
+}
+
+update_failed() {
+    local result=$?
+    trap - EXIT
+    if (( result != 0 )); then
+        printf 'Certificate update failed.\n' >&2
+        if [[ -d $TX ]]; then
+            printf 'Restoring the previous certificate state.\n' >&2
+            recover
+        fi
+        printf '%s\n' 'Certificate update failed.' > "$DATA/last-error"
+    fi
+    exit "$result"
+}
+
+update() {
+    local id key base old new number incoming local_manifest stage hook index=0
+    local list_limit=$((256 * 1024)) manifest_limit=$((64 * 1024)) bundle_limit=$((324 * 1024))
+    local -a identifiers
+    rm -rf -- "$TX.finished" "$DONE.finished"
+    tidy_committed
+    recover
+    trap update_failed EXIT
+    read_configuration
+    mkdir -- "$TX"
+    : > "$TX/draft"
+    : > "$TX/hooks"
+    : > "$TX/updated"
+    printf 'Fetching all assigned certificates from the CLM server.\n'
+    get /certificates "$TX/list.json" "$list_limit"
+    jq -er '
+        .certificates | select(type == "array" and all(.[];
+            .certificate_id | type == "string" and test("^[a-z0-9.*-]+$")))
+        | map(.certificate_id) | unique | .[]
+    ' "$TX/list.json" > "$TX/identifiers" || {
+        jq -e '.certificates == []' "$TX/list.json" >/dev/null ||
+            fail 'Invalid certificate list.'
+    }
+    mapfile -t identifiers < "$TX/identifiers"
+    for id in "${identifiers[@]}"; do
+        identifier_valid "$id" || fail 'Invalid certificate identifier.'
+        key=$(storage_key "$id")
+        base=$(storage_base "$key")
+        old=$(current_generation "$base")
+        printf 'Checking the current generation of %s.\n' "$id"
+        get "/certificates/$key/manifest" "$TX/manifest" "$manifest_limit"
+        incoming=$(manifest "$TX/manifest" "$id") || fail 'Invalid certificate manifest.'
+        number=$(jq -er .version <<< "$incoming")
+        new=$(generation "$number")
+        [[ $old == - ]] || (( number >= 10#$old )) || fail 'Server reported an older generation.'
+        local_manifest=
+        if [[ $old != - && -f $base/versions/$old/manifest.json ]]; then
+            local_manifest=$(manifest "$base/versions/$old/manifest.json" "$id") ||
+                fail 'Invalid installed certificate manifest.'
+        fi
+        if [[ $old == "$new" ]]; then
+            [[ $incoming == "$local_manifest" ]] || fail 'Installed generation differs from its manifest.'
+            validate_material "$base/versions/$old" "$id" "$incoming"
+            continue
+        fi
+        [[ ! -e $base/versions/$new && ! -L $base/versions/$new ]] ||
+            fail 'A conflicting generation already exists.'
+        index=$((index + 1))
+        stage="$TX/stage.$index"
+        mkdir -- "$stage"
+        printf 'Downloading generation %s for %s.\n' "$number" "$id"
+        get "/certificates/$key/versions/$number/bundle" "$TX/bundle" "$bundle_limit"
+        unpack "$TX/bundle" "$stage"
+        [[ $(manifest "$stage/manifest.json" "$id") == "$incoming" ]] ||
+            fail 'Certificate bundle does not match its manifest.'
+        validate_material "$stage" "$id" "$incoming"
+        printf '%s\n' "$incoming" > "$stage/manifest.json"
+        if [[ -z $local_manifest ||
+            $(jq -c .files <<< "$incoming") != "$(jq -c .files <<< "$local_manifest")" ]]; then
+            printf '%s\n' "$id" >> "$TX/updated"
+        fi
+        printf '%s|%s|%s|%s\n' "$id" "$key" "$old" "$new" >> "$TX/draft"
+    done
+    sync -f "$STORE"
+    mv -T -- "$TX/draft" "$TX/plan"
+    sync -f "$STORE"
+    index=0
+    while IFS='|' read -r id key old new; do
+        index=$((index + 1))
+        stage="$TX/stage.$index"
+        base=$(storage_base "$key")
+        ensure_base "$base"
+        [[ ! -e $base/versions/$new && ! -L $base/versions/$new ]] ||
+            fail 'A conflicting generation already exists.'
+        chmod 0640 -- "$stage"/*
+        chmod 0750 -- "$stage"
+        mv -T -- "$stage" "$base/versions/$new"
+        printf 'Activating generation %s for %s.\n' "$((10#$new))" "$id"
+        activate "$base" "$new"
+    done < "$TX/plan"
+    sync -f "$STORE"
+    if [[ -s $TX/updated && -d $ROOT/config/hooks.d ]]; then
+        trusted "$ROOT/config/hooks.d" 022 || fail 'Unsafe certificate hook directory.'
+        for hook in "$ROOT"/config/hooks.d/*; do
+            [[ ! -L $hook && -f $hook && -x $hook ]] || continue
+            if [[ ! ${hook##*/} =~ ^[a-zA-Z0-9._-]+$ ]] || ! trusted "$hook" 022; then
+                fail 'Unsafe certificate hook.'
+            fi
+            printf '%s\n' "${hook##*/}" >> "$TX/hooks"
+            sync -f "$STORE"
+            run_hook "${hook##*/}" updated
+        done
+    fi
+    mv -T -- "$TX" "$DONE"
+    sync -f "$STORE"
+    tidy_committed
+    date -u '+%Y-%m-%dT%H:%M:%SZ' > "$DATA/last-update"
+    rm -f -- "$DATA/last-error"
+    printf 'Checked %s assigned certificates. Updated %s.\n' "${#identifiers[@]}" "$index"
+}
+
+status() {
+    local base link entry last_update='' last_error=''
+    local -a entries=()
+    for link in "$STORE"/*/current "$STORE"/.long/*/*/current; do
+        base=${link%/current}
+        current_generation "$base" >/dev/null
+        entry=$(jq -ce --arg path "$link" '{
+            identifier: .certificate_id, generation: .version, expires: .not_after,
+            certificate_path: ($path + "/fullchain.pem"), private_key_path: ($path + "/privkey.pem")
+        }' "$link/manifest.json")
+        entries+=("$entry")
+    done
+    [[ ! -f $DATA/last-update ]] || last_update=$(<"$DATA/last-update")
+    [[ ! -f $DATA/last-error ]] || last_error=$(<"$DATA/last-error")
+    local pending=false
+    [[ ! -d $TX ]] || pending=true
+    if [[ ${1:-} == --json ]]; then
+        printf '%s\n' "${entries[@]}" | jq -s --arg update "$last_update" --arg error "$last_error" \
+            --argjson pending "$pending" '{
+                certificates: ., interrupted_update: $pending,
+                last_update: ($update | select(length > 0) // null),
+                last_error: ($error | select(length > 0) // null)
+            }'
+    else
+        printf '%s\n' 'Certificates'
+        if (( ${#entries[@]} == 0 )); then printf '  None\n'; fi
+        printf '%s\n' "${entries[@]}" | jq -r '
+            "  \(.identifier)\n    Generation       \(.generation)\n    Expires          \(.expires)" +
+            "\n    Certificate path \(.certificate_path)\n    Private key path \(.private_key_path)"
+        '
+        printf 'Interrupted update pending  %s\nLast update                 %s\nLast error                  %s\n' \
+            "$pending" "${last_update:-None}" "${last_error:-None}"
+    fi
+}
+
+main() {
+    case "${1:-}" in
+        version) [[ $# == 1 ]] || fail 'Usage: clm-client-bash version'; printf '%s\n' "$VERSION"; return ;;
+        -h|--help|'')
+            printf '%s\n' 'Usage: clm-client-bash {update|status [--json]|version}'; return ;;
+        update) [[ $# == 1 ]] || fail 'Usage: clm-client-bash update' ;;
+        status) [[ $# == 1 || ( $# == 2 && $2 == --json ) ]] ||
+            fail 'Usage: clm-client-bash status [--json]' ;;
+        *) fail 'Usage: clm-client-bash {update|status [--json]|version}' ;;
+    esac
+    required_tools
+    local directory
+    for directory in "$ROOT" "$ROOT/config" "$ROOT/run" "$STORE" "$DATA"; do
+        if [[ ! -d $directory ]] || ! trusted "$directory" 022; then
+            fail "Install the client and protect the directory $directory."
+        fi
+    done
+    [[ ! -L $ROOT/run/update.lock &&
+        ( ! -e $ROOT/run/update.lock || -f $ROOT/run/update.lock ) ]] ||
+        fail 'Invalid update lock.'
+    exec 9>>"$ROOT/run/update.lock"
+    if [[ $1 == status ]]; then
+        flock -s 9
+        status "${2:-}"
+    else
+        flock -x 9
+        update
+    fi
+}
+
+main "$@"

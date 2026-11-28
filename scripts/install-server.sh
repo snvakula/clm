@@ -8,23 +8,11 @@ keep_configuration() {
 }
 
 install_server_configuration() {
-    local sources=$1 config=$2 site=$3 checksum
+    local sources=$1 config=$2 site=$3
     install -d -m 0700 "$config/aws"
     keep_configuration 0600 "$sources/examples/server/clm.yaml" "$config/clm.yaml"
-    if [[ -f $config/route53.yaml && ! -L $config/route53.yaml ]]; then
-        checksum=$(sha256sum < "$config/route53.yaml")
-        # Refresh the comments in the two unchanged defaults shipped previously.
-        case ${checksum%% *} in
-            b625eb7de5aeef9f6d6f3782bd9c5945449b7c294002654ac386f65206d8c66d|\
-            ef5a1c1f4a3030eea0d42ef0dc8089fef4fc7f4fb3af9a26dbb2875d14ee34f4)
-                install -m 0600 "$sources/packaging/route53.yaml" "$config/route53.yaml" ;;
-        esac
-    fi
     keep_configuration 0600 "$sources/packaging/route53.yaml" "$config/route53.yaml"
     keep_configuration 0600 "$sources/examples/server/credentials" "$config/aws/credentials"
-    if [[ -f $config/aws/config && ! -L $config/aws/config && ! -s $config/aws/config ]]; then
-        rm -- "$config/aws/config"
-    fi
     keep_configuration 0644 "$sources/packaging/nginx/clm.conf" "$site"
 }
 
@@ -88,30 +76,6 @@ publish_application() {
     fi
 }
 
-remove_legacy_layout() {
-    local root=$1 entry name
-    for entry in "$root/venv/"*; do
-        name=${entry##*/}
-        if [[ $name =~ ^[a-f0-9]{64}$ && ! -L $entry && -f $entry/pyvenv.cfg ]]; then
-            rm -rf -- "$entry"
-        fi
-    done
-    if [[ -L $root/acme/engine ]]; then
-        rm -- "$root/acme/engine"
-    fi
-    if [[ -d $root/acme/engines && ! -L $root/acme/engines ]]; then
-        for entry in "$root/acme/engines/"*; do
-            name=${entry##*/}
-            if [[ $name =~ ^[a-f0-9]{40}-[a-f0-9]{64}$ && ! -L $entry && -f $entry/acme.sh ]]; then
-                rm -rf -- "$entry"
-            fi
-        done
-        if [[ -z $(ls -A -- "$root/acme/engines") ]]; then
-            rmdir -- "$root/acme/engines"
-        fi
-    fi
-}
-
 keep_file() {
     local mode=$1 group=$2 source=$3 target=$4
     if [[ ! -e $target && ! -L $target ]]; then
@@ -128,29 +92,8 @@ install_cli_link() {
 
 configure_server_identity() {
     local root=$1
-    if id clm >/dev/null 2>&1 && id clm-api >/dev/null 2>&1; then
-        echo 'Both the old and new CLM users exist. Resolve the account conflict before installing.' >&2
-        return 1
-    fi
-    if getent group clm >/dev/null && getent group clm-api >/dev/null; then
-        echo 'Both the old and new CLM groups exist. Resolve the group conflict before installing.' >&2
-        return 1
-    fi
-
-    # Renaming the installed service identity preserves existing file ownership.
-    if id clm-api >/dev/null 2>&1; then
-        if [[ $(id -u clm-api) == 0 || $(id -gn clm-api) != clm-api ]]; then
-            echo 'The previous CLM identity does not match the installed service account.' >&2
-            return 1
-        fi
-        usermod --login clm clm-api
-    fi
     if ! getent group clm >/dev/null; then
-        if getent group clm-api >/dev/null; then
-            groupmod --new-name clm clm-api
-        else
-            groupadd --system clm
-        fi
+        groupadd --system clm
     fi
     if ! id clm >/dev/null 2>&1; then
         useradd --system --gid clm --home-dir "$root" \
@@ -264,7 +207,6 @@ PY
     (umask 022; mkdir -p /usr/local/bin)
     install_cli_link /usr/local/bin/clm "$root/bin/clm"
     install_cli_link /usr/local/bin/clmd "$root/bin/clmd"
-    remove_legacy_layout "$root"
     flock -u 8
     install_server_units "$sources" "$root" /etc/systemd/system
     echo 'Installed CLM server. Configuration directory /opt/clm/config.'

@@ -1,35 +1,24 @@
 # Implementation plan and verification
 
-The feature branch retains the original foundation. The [specification](specification.md) governs requirements. The branch targets `main` for review.
+CLM 1.0.0 implements the [technical specification](specification.md).
 
-## Development stages
-
-| Stage | Progress and verification |
+| Stage | Implementation |
 |---|---|
-| 1. Project foundation and common library | Implemented exact DNS identity, permissions and locking helpers, strict PEM, chain and SAN checks, manifests and bounded ZIP handling. |
-| 2. Server core and certificate repository | Implemented SQLite migration v1, transactional metadata, immutable generations, durable publication and reconciliation. |
-| 3. ACME and Route 53 integration | Implemented production Let's Encrypt, isolated per-account engine state, public delegation checks, safe TXT changes and migration recovery. Real CA and AWS acceptance is pending. |
-| 4. Server CLI and distribution API | Implemented administration, certificate import, client access control, token lifecycle, audits and authenticated, leased distribution. |
-| 5. Client application | The Debian client reads the URL and token from YAML, updates all assignments, and runs executable hooks after certificate changes. |
-| 6. Installation and system integration | Added native Debian 13 installers, isolated virtual environments, Nginx, systemd and log rotation. Full privileged install and upgrade acceptance is pending. |
-| 7. Testing and security review | Local automated suite, lint, formatting, dependency checks, source patch checks and Nginx configuration checks passed. Production deployment acceptance is pending. |
-| 8. Documentation and pull request | Administrator, client and operations guides are complete. [Pull request #1](https://github.com/snvakula/clm/pull/1) is open for review and manual acceptance. |
+| 1. Project foundation | Independent application sources, certificate identity, validation and storage interfaces. |
+| 2. Server and repository | Transactional SQLite metadata, immutable generations, atomic publication and recovery. |
+| 3. ACME and Route 53 | Isolated account state, production Let's Encrypt, public delegation and recoverable DNS changes. |
+| 4. Server CLI and API | Local administration and authorised distribution through Nginx and a Unix socket. |
+| 5. Clients | Debian Python client and portable Bash client, with authenticated batch updates, validation and rollback hooks. |
+| 6. Installation | Debian installers, Bash installer, systemd units and scheduler instructions for other init systems. |
+| 7. Verification | Unit, integration, security, fault-recovery and packaging tests. Production CA and AWS operations are mocked. |
+| 8. Documentation | Administrator, client and operational guides, including backup and recovery. |
 
-## Renewal and installer follow-up
+## Verification
 
-- A renewal that is not due now completes with the current generation. An interrupted attempt or failed export retains enough state to recover without requesting a duplicate certificate.
-- Both installers restore their command links under `/usr/local/bin/`. Repeated installation preserves correct links and reports a conflict if a name belongs to another file or link.
-- On Debian 13 Python 3.13, all 68 tests passed with the pinned acme.sh archive and Debian Nginx available. Ruff and ShellCheck passed. Full installation, upgrade and the renewal timer still need verification on the deployment host.
-- The client uses mode `0750` for certificate storage directories and `0640` for published PEM files and manifests. Installer and client tests cover migration of existing generations and publication of new ones under umask `0077`. All 69 local tests, Ruff and ShellCheck passed.
-
-## Test results
-
-- Python 3.11.18 and Debian 13 Python 3.13.5 each passed all 38 tests, with the pinned upstream engine archive and Debian Nginx 1.26.3 available to the tests.
-- Ruff lint and formatting, ShellCheck, Bash syntax and `git diff --check` passed.
-- Clean server and client Python builds from their hash-locked requirements passed `pip check`. The client works without the server-only dependencies.
-- `pip-audit` reported no known vulnerabilities in the final server and build lockfiles or in the client lockfile. The initially selected `cryptography` version was upgraded to address reported advisories.
-- The application served health through an inherited Unix socket. A Nginx configuration test used local certificates. systemd calendar expressions parsed successfully.
-- The pinned acme.sh source patch applied with zero fuzz. The mocked Route 53 integration exercised an interrupted DNS response, later cleanup and preservation of an existing TXT value and TTL. The suite used test certificates, mocked external ACME and AWS operations and no real credentials.
+- The automated suite covers authenticated downloads, certificate validation, secret and filesystem permissions, publication and recovery, client hooks, the pinned acme.sh patch and Nginx configuration.
+- All 71 tests passed on Debian 13 with Python 3.13, including Bash client tests using local HTTPS, a failed hook, an interrupted activation, and repeated installation into a temporary tree. Ruff, ShellCheck and dependency audits passed.
+- Ruff, ShellCheck and dependency audits run in CI. Production credentials are excluded from automated testing.
+- Deployment checks include repeat installation with a live systemd, local scheduling for Bash clients without systemd, server account isolation under deployment credentials and restoration from a backup.
 
 ## Decisions and known limitations
 
@@ -38,34 +27,35 @@ The feature branch retains the original foundation. The [specification](specific
 - Google Public DNS over HTTPS is the public resolver. Authorised deployment networks must permit the outbound request.
 - Imported certificates are eligible for automatic renewal after their first successful explicit renewal through the selected ACME account. An unresolved CA revocation can require operator confirmation from the issuer.
 - Multi-SAN certificates, alternative ACME environments and application-level encryption are outside scope. The deployment requires encrypted underlying storage and backups.
-- Remaining acceptance work requires clean Debian 13 hosts with root and a running systemd, operator-controlled DNS with scoped AWS credentials, and real Nginx service reloads. Confirm repeated full installations and upgrades, account isolation under the deployed service identity, timers, issued certificate and key rotation, and a full backup restoration. See the [manual acceptance checklist](operations.md#manual-deployment-acceptance).
+- The Bash client accepts generation numbers up to 9,007,199,254,740,991, the largest integer representable exactly by all supported jq versions.
+- Full deployment verification requires a Debian 13 server and Linux client hosts with root and a running systemd, operator-controlled DNS with scoped AWS credentials, and real Nginx service reloads. Confirm repeated full installations and upgrades, account isolation under the deployed service identity, timers, issued certificate and key rotation, and a full backup restoration. See the [deployment checks](operations.md#deployment-checks).
 
 ## Final review against the specification
 
 | Section | Review |
 |---|---|
-| 1. Project objective | Issuance, renewal, private key rotation, authenticated distribution, local activation and migration are provided by the three entry points. |
+| 1. Project objective | Issuance, renewal, private key rotation, authenticated distribution, local activation and migration are provided by the server and both clients. |
 | 2. General requirements | Python, Debian 13, SQLite, FastAPI, Nginx, systemd, production Let's Encrypt and Route 53. The implementation uses British English. |
 | 3. Architecture | Local administration, distribution through a Unix socket and Nginx, and a pull-only client. |
 | 4. Identity and reuse | Canonical IDNA DNS identities, independent wildcard and exact names, unique storage and many-to-many grants. |
 | 5. Server directories | Native layout under `/opt/clm`; OS integration files in the applicable system locations. |
-| 6. ACME integration | Pinned acme.sh flags verified against source. Renewal eligibility and rotation delegated to the engine with validated export. Live CA acceptance pending. |
-| 7. Route 53 | Public CNAME discovery, exact hosted zone, account isolation, global locking, conditional TXT updates and recoverable migration. Live Route 53 acceptance pending. |
+| 6. ACME integration | Pinned acme.sh flags verified against source. Renewal eligibility and rotation delegated to the engine with validated export. Live CA deployment check pending. |
+| 7. Route 53 | Public CNAME discovery, exact hosted zone, account isolation, global locking, conditional TXT updates and recoverable migration. Live Route 53 deployment check pending. |
 | 8. Repository | Validated, immutable PEM generations, authenticated checksums, atomic switching, retention and download leases. |
 | 9. Database | SQLite schema version, WAL, busy timeouts, foreign keys, audit trail and publication reconciliation. |
 | 10. Administrative CLI | Certificate, client, import, status, check and version commands; JSON inspection and explicit destructive controls. |
 | 11. Distribution API | Versioned GET endpoints, scoped authentication, manifests and bundles, sensitive response cache controls. |
 | 12. Authentication and security | Hashed random tokens, API identity, rate limits, restricted socket, ACL template, PEM permissions and encrypted-storage guidance. Root deployment checks pending. |
-| 13. Client directories | Native layout under `/opt/clm-client`, protected credentials and separate dependency set. |
-| 14. Client CLI | Secure enrolment, available certificates, install, inspection, update and guarded removal. |
+| 13. Client directories | Independent roots under `/opt/clm-client` and `/opt/clm-client-bash`, with protected credentials. |
+| 14. Client CLI | Manual endpoint and token configuration, update of all assignments, status and version. |
 | 15. Client storage | Versioned generations with stable paths and current and previous retention. |
 | 16. Client updates | Bounded manifest and archive verification, serialised switching, service checks, rollback and interrupted update recovery. |
 | 17. Update hooks | Local executable scripts, per-hook timeouts, rollback events and a bundled example for running web servers. |
-| 18. Automatic renewal and updates | Persistent systemd timers and UTC schedule settings. Actual timer execution on deployed hosts pending. |
+| 18. Automatic renewal and updates | Persistent systemd timers and scheduler guidance for Linux hosts without systemd. Actual timer execution on deployed hosts pending. |
 | 19. Logging and monitoring | Structured logs and journal output, rotation, SQLite audit and machine-readable expiry and failure status. |
-| 20. Installation and upgrades | Native installers with versioned releases, dependency hashes and state preservation. Full privileged installation, repetition and upgrade pending. |
-| 21. Source layout | Independent server and client packages, compatible distribution format, separate production locks and CI. |
-| 22. Testing | Automated unit, integration, security and failure recovery checks. Host-level privilege and live acceptance are documented separately. |
+| 20. Installation and upgrades | Native installers with dependency checks and state preservation. Full privileged installation, repetition and upgrade pending. |
+| 21. Source layout | Independent server, Debian Python client and Bash client sources, with one distribution format. |
+| 22. Testing | Automated unit, integration, security and failure recovery checks. Host-level privilege and live operation are documented separately. |
 | 23. Documentation | Installation, AWS IAM, DNS, CLI, API, service integration, migration, recovery and operational guides. |
-| 24. Acceptance workflow | Mocked issuance, shared wildcard, authorisation, key rotation and rollback passed. Full workflow on administrator-controlled domains is pending. |
+| 24. Deployment workflow | Mocked issuance, shared wildcard, authorisation, key rotation and rollback passed. Full workflow on administrator-controlled domains is pending. |
 | 25. Implementation approach | Incremental commits, documented upstream verification and an explicit decision for the DNS plugin adjustment. |

@@ -24,9 +24,10 @@ The system must support migration from existing certificate distribution service
 | Project name | CLM |
 | Server hostname | Operator-configured FQDN (e.g. clm.example.com) |
 | Server installation directory | /opt/clm |
-| Client installation directory | /opt/clm-client |
-| Programming language | Python 3 |
-| Primary operating system | Debian 13 |
+| Client installation directories | `/opt/clm-client` and `/opt/clm-client-bash` |
+| Programming languages | Python 3 for the server and Debian client, Bash for the standalone Linux client |
+| Server and Python client OS | Debian 13 |
+| Bash client OS | Linux with the tools listed in the [Bash client guide](client-bash.md) |
 | ACME engine | acme.sh |
 | Certificate authority | Let's Encrypt |
 | ACME challenge | DNS-01 only |
@@ -39,7 +40,7 @@ The system must support migration from existing certificate distribution service
 | REST API | FastAPI |
 | Reverse proxy | Nginx |
 | Authentication | Individual bearer tokens |
-| Scheduler | systemd |
+| Scheduler | systemd for Debian installations and the host scheduler for Bash clients without systemd |
 | Containerisation | Not permitted |
 
 Use British English throughout the source code comments, documentation, CLI messages and application logs.
@@ -717,6 +718,10 @@ Set the HTTPS server URL and client token in `/opt/clm-client/config/client.yaml
 
 An update lists all certificates assigned to this client's token and synchronises those certificates in a single batch. A new assignment is downloaded automatically. Status reports the installed generations, full certificate and private key paths, and the last update result. It accepts `--json` for automation.
 
+### Bash client for Linux
+
+The standalone Bash client provides `clm-client-bash update`, `status [--json]` and `version` with the same distribution API and storage, validation, activation and rollback rules. Its independent root is `/opt/clm-client-bash/`. The configuration file is `config/client.conf` and contains literal `server=` and `token=` values. The installer sets up a timer when systemd is running. Scheduling on other Linux hosts is documented in the Bash client guide.
+
 ## 15. Client certificate storage
 
 Use the same versioned generation model as the server.
@@ -764,7 +769,7 @@ The installed `restart-web-servers` example in the hooks directory restarts runn
 
 ## 18. Automatic renewal and updates
 
-Use systemd services and timers.
+Use systemd services and timers where systemd is running. Allow the Bash client to run through the host scheduler on other Linux systems.
 
 Do not use cron.
 
@@ -875,23 +880,23 @@ Provide native installation scripts:
 ```text
 install-server.sh
 install-client-debian.sh
+install-client-bash.sh
 ```
 
 Provide documented uninstall procedures.
 
 Installation scripts must:
 
-- Support Debian 13.
-- Install required operating system dependencies.
+- Support Debian 13 for the server and Python client. Provide an independent Bash client installer for Linux without a distribution-specific package manager.
+- Install required operating system dependencies for Debian installations. Check that the Bash client's required tools are present.
 - Create required system users and groups.
 - Create application directories with appropriate permissions.
-- Create Python virtual environments.
-- Install pinned Python dependencies.
-- Install systemd units.
+- Create Python virtual environments and install pinned Python dependencies for the server and Debian client.
+- Install systemd units where applicable.
 - Install CLI executables under the application’s bin directory and link them from `/usr/local/bin/`.
 - Install or provide the Nginx configuration.
 - Validate the resulting configuration.
-- Install service and timer definitions under each application’s `systemd/` directory, link them from `/etc/systemd/system/`, and enable and start the renewal and update timers.
+- On systemd hosts, install service and timer definitions under each application’s `systemd/` directory, link them from `/etc/systemd/system/`, and enable and start the renewal and update timers.
 - Be safe to execute repeatedly.
 
 Do not overwrite existing credentials, configuration or certificate data during repeated installations or upgrades.
@@ -921,7 +926,8 @@ clm/
 ├── LICENSE
 ├── src/
 │   ├── clm_server/
-│   └── clm_client_debian/
+│   ├── clm_client_debian/
+│   └── clm_client_bash/
 ├── tests/
 │   ├── unit/
 │   └── integration/
@@ -930,7 +936,8 @@ clm/
 │   └── nginx/
 ├── scripts/
 │   ├── install-server.sh
-│   └── install-client-debian.sh
+│   ├── install-client-debian.sh
+│   └── install-client-bash.sh
 ├── examples/
 └── docs/
 ```
@@ -1049,9 +1056,9 @@ Provide:
 
 Use reserved example domain names for illustrative configuration; real issuance requires administrator-controlled domains. Never include actual secrets.
 
-## 24. Acceptance criteria
+## 24. Deployment verification
 
-The project is accepted when the following illustrative workflow operates successfully using administrator-controlled domains in place of the reserved example domains. Real issuance is a manual acceptance test.
+Verify the following workflow using administrator-controlled domains in place of the reserved example domains. Run real issuance only during an authorised manual deployment check.
 
 On the CLM server:
 
@@ -1066,7 +1073,7 @@ clm client add kb
 clm client grant kb '*.example.com'
 ```
 
-On each of the Git, Jira and KB hosts, set the CLM server URL and the token assigned to that host in `/opt/clm-client/config/client.yaml`. Fetch all certificates assigned to the client and inspect the resulting paths.
+On each of the Git, Jira and KB hosts, set the CLM server URL and the assigned token in the configuration for the installed client. The Debian client uses `/opt/clm-client/config/client.yaml`, and the Bash client uses `/opt/clm-client-bash/config/client.conf`. Fetch all assigned certificates and inspect the resulting paths.
 
 ```bash
 /opt/clm-client/bin/clm-client update

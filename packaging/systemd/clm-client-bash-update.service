@@ -1,0 +1,12 @@
+[Unit]
+Description=Update certificates with the CLM Bash client
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/opt/clm-client-bash/bin/clm-client-bash update
+NoNewPrivileges=yes
+PrivateTmp=yes

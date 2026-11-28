@@ -20,33 +20,10 @@ install_client_storage() {
 
 install_client_configuration() {
     local sources=$1 config=$2
-    local hook="$config/hooks.d/restart-web-servers"
-    local legacy="$config/../bin/restart-web-servers"
-    local bundled="$sources/examples/client/hooks.d/restart-web-servers"
-    local mode=0700 checksum upgrade=false
     install -d -m 0700 "$config/hooks.d"
     keep_configuration 0600 "$sources/examples/client/client.yaml" "$config/client.yaml"
-
-    if [[ -f $hook && ! -L $hook ]]; then
-        checksum=$(sha256sum < "$hook")
-        if [[ ${checksum%% *} == 923c02c5dd28cc462803161ae6a9bef813e683e3ce654f0383b43a08e9c4c6af ]]; then
-            upgrade=true
-            mode=$(stat -c %a -- "$hook")
-        fi
-    elif [[ ! -e $hook && ! -L $hook ]]; then
-        upgrade=true
-    fi
-    if "$upgrade"; then
-        if [[ -f $legacy && ! -L $legacy ]]; then
-            install -m "$mode" -- "$legacy" "$hook"
-            rm -- "$legacy"
-        else
-            install -m "$mode" -- "$bundled" "$hook"
-        fi
-    fi
-    if [[ -f $legacy && ! -L $legacy ]] && cmp -s -- "$legacy" "$bundled"; then
-        rm -- "$legacy"
-    fi
+    keep_configuration 0700 "$sources/examples/client/hooks.d/restart-web-servers" \
+        "$config/hooks.d/restart-web-servers"
 }
 
 stage_client_files() {
@@ -107,16 +84,6 @@ publish_application() {
         fi
         return 1
     fi
-}
-
-remove_legacy_layout() {
-    local root=$1 entry name
-    for entry in "$root/venv/"*; do
-        name=${entry##*/}
-        if [[ $name =~ ^[a-f0-9]{64}$ && ! -L $entry && -f $entry/pyvenv.cfg ]]; then
-            rm -rf -- "$entry"
-        fi
-    done
 }
 
 install_cli_link() {
@@ -187,7 +154,6 @@ install_client() {
     install -m 0755 -- "$workspace/bin/clm-client" "$root/bin/clm-client"
     (umask 022; mkdir -p /usr/local/bin)
     install_cli_link /usr/local/bin/clm-client "$root/bin/clm-client"
-    remove_legacy_layout "$root"
     flock -u 8
     install_client_units "$sources" "$root" /etc/systemd/system
     echo 'Installed CLM Debian client. Configuration directory /opt/clm-client/config.'
