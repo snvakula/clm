@@ -1,6 +1,6 @@
 # Implementation plan and verification
 
-CLM 1.0.0 implements the [technical specification](specification.md).
+CLM 1.1.0 implements the [technical specification](specification.md).
 
 | Stage | Implementation |
 |---|---|

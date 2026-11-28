@@ -1,4 +1,4 @@
-# Certificate Lifecycle Management 1.0.0
+# Certificate Lifecycle Management
 
 CLM centralises publicly trusted TLS certificate issuance and renewal on Debian 13. Authorised clients pull versioned PEM certificate and private key bundles over HTTPS, validate them and activate them together. Each certificate covers one exact hostname or wildcard and can be shared by several clients.
 
