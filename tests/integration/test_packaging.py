@@ -250,10 +250,12 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
         assert not (config / "aws/config").exists()
         assert "aws_secret_access_key =" in (config / "aws/credentials").read_text()
     else:
-        expected = {
-            config / "client.yaml": 0o600,
-            config / "hooks.d/restart-web-servers": 0o700,
-        }
+        expected = {config / "client.yaml": 0o600}
+        assert not list((config / "hooks.d").iterdir())
+        hook = config / "hooks.d/restart-web-servers"
+        hook.write_text("operator configuration\n")
+        hook.chmod(0o700)
+        expected[hook] = 0o700
         assert not (config / "services.d").exists()
         assert not (config / "credentials").exists()
 
