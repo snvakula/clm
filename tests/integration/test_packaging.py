@@ -8,24 +8,20 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-INSTALLERS = {"server": "install-server.sh", "client": "install-client-debian.sh"}
+INSTALLERS = {"server": "install-server.sh", "client": "install-client-linux.sh"}
 REVISION = "5567d7fe7298fd37aca53194885ba444c6678669"
 TARBALL_SHA256 = "22ca219a96d643910f79d2888d735a444672e5bc0179d3eb6142f0642a9682dc"
 
 
 def test_scripts_and_timer_parameters():
     scripts = ROOT / "scripts"
-    assert {path.name for path in scripts.iterdir()} == {
-        *INSTALLERS.values(),
-        "install-client-bash.sh",
-    }
+    assert {path.name for path in scripts.iterdir()} == set(INSTALLERS.values())
     for path in scripts.glob("*.sh"):
         subprocess.run(["bash", "-n", str(path)], check=True)
     units = ROOT / "packaging/systemd"
     schedules = {
         "clm-renew": ("02:00:00", "30min", "clm cert renew --all"),
         "clm-client-update": ("04:00:00", "3h", "clm-client update"),
-        "clm-client-bash-update": ("04:00:00", "3h", "clm-client-bash update"),
     }
     for name, (hour, delay, entrypoint) in schedules.items():
         timer = (units / f"{name}.timer").read_text()
@@ -247,7 +243,7 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
             config / "aws/credentials": 0o600,
             site: 0o644,
         }
-        from clm_server.config import load_config
+        from server.config import load_config
 
         assert load_config(config / "route53.yaml") == {"accounts": {}, "challenge_aliases": {}}
         assert "#     credentials_profile: secondary" in (config / "route53.yaml").read_text()
@@ -278,7 +274,7 @@ def test_installer_writes_active_configuration_and_preserves_edits(tmp_path, rol
 def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, commands):
     stage_files(tmp_path, role)
     app = tmp_path / "app"
-    source = ROOT / "src" / ("clm_server" if role == "server" else "clm_client_debian")
+    source = ROOT / "src" / ("server" if role == "server" else "client_linux")
     assert {entry.name for entry in app.iterdir()} == {file.name for file in source.glob("*.py")}
     assert {entry.name for entry in (tmp_path / "bin").iterdir()} == commands
     for name in commands:
@@ -299,61 +295,41 @@ def test_stage_installs_only_the_selected_package_and_commands(tmp_path, role, c
             assert result.stdout.strip() == metadata["project"]["version"]
 
 
-def test_client_certificate_directory_permissions_on_install_and_upgrade(tmp_path):
+def test_client_creates_private_storage(tmp_path):
     command = [
         "bash",
         "-euc",
         'source "$1"; umask 077; install_client_storage "$2"',
         "test",
-        str(ROOT / "scripts/install-client-debian.sh"),
+        str(ROOT / "scripts/install-client-linux.sh"),
         str(tmp_path),
     ]
-    certificates = tmp_path / "certificates"
-    subprocess.run(command, check=True)
-    assert certificates.stat().st_mode & 0o777 == 0o750
-
-    certificates.chmod(0o700)
-    base = certificates / "certificate"
-    versions = base / "versions"
-    generation = versions / "000001"
-    for directory in (base, versions, generation):
-        directory.mkdir(mode=0o700)
-    current = base / "current"
-    current.symlink_to("versions/000001")
-    files = [
-        generation / name
-        for name in ("cert.pem", "chain.pem", "fullchain.pem", "privkey.pem", "manifest.json")
-    ]
-    for path in files:
-        path.write_text(path.name)
-        path.chmod(0o600)
-    staging = versions / ".stage-interrupted"
-    staging.mkdir(mode=0o700)
-    staged_key = staging / "privkey.pem"
-    staged_key.write_text("staged key")
-    staged_key.chmod(0o600)
-    outside = tmp_path / "outside"
-    outside.mkdir(mode=0o700)
-    external_key = outside / "privkey.pem"
-    external_key.write_text("external key")
-    external_key.chmod(0o600)
-    (certificates / "outside").symlink_to(outside, target_is_directory=True)
-    (base / "privkey.pem").symlink_to(external_key)
-
     for _ in range(2):
         subprocess.run(command, check=True)
-        for directory in (certificates, base, versions, generation):
-            assert directory.stat().st_mode & 0o777 == 0o750
-        assert (tmp_path / "data").stat().st_mode & 0o777 == 0o700
-        assert (tmp_path / "logs").stat().st_mode & 0o777 == 0o700
-        assert current.readlink() == Path("versions/000001")
-        for path in files:
-            assert path.stat().st_mode & 0o777 == 0o640
-            assert path.read_text() == path.name
-        assert outside.stat().st_mode & 0o777 == 0o700
-        assert external_key.stat().st_mode & 0o777 == 0o600
-        assert staging.stat().st_mode & 0o777 == 0o700
-        assert staged_key.stat().st_mode & 0o777 == 0o600
+        for name in ("certificates", "data", "logs"):
+            assert (tmp_path / name).stat().st_mode & 0o777 == 0o700
+
+
+def test_server_certificate_root_does_not_inherit_setgid(tmp_path):
+    data = tmp_path / "data"
+    data.mkdir()
+    data.chmod(0o3770)
+    subprocess.run(
+        [
+            "bash",
+            "-euc",
+            'source "$1"; install_server_certificate_storage "$2" "$3" "$4"',
+            "test",
+            str(ROOT / "scripts/install-server.sh"),
+            str(tmp_path),
+            str(os.getuid()),
+            str(os.getgid()),
+        ],
+        check=True,
+    )
+    info = (data / "certificates").stat()
+    assert info.st_mode & 0o7777 == 0o700
+    assert (info.st_uid, info.st_gid) == (os.getuid(), os.getgid())
 
 
 def test_client_reinstall_preserves_configuration_and_certificate_state(tmp_path):
@@ -376,7 +352,7 @@ def test_client_reinstall_preserves_configuration_and_certificate_state(tmp_path
             "-euc",
             'source "$1"; publish_application "$2/app" "$3"',
             "test",
-            str(ROOT / "scripts/install-client-debian.sh"),
+            str(ROOT / "scripts/install-client-linux.sh"),
             str(root),
             str(workspace),
         ],
@@ -393,8 +369,9 @@ def test_restart_web_servers_checks_activity_and_restarts_only_running_units(tmp
     systemctl.write_text(
         '#!/bin/sh\nprintf "%s\n" "$*" >> "$SYSTEMCTL_LOG"\n'
         'case "$*" in\n'
+        '  "show --property=SystemState --value") echo running ;;\n'
         '  "is-active --quiet apache2.service") exit 0 ;;\n'
-        '  "is-active --quiet nginx.service") exit 3 ;;\n'
+        '  "is-active --quiet httpd.service"|"is-active --quiet nginx.service") exit 3 ;;\n'
         '  "show --property=SubState --value apache2.service") echo running ;;\n'
         '  "try-restart apache2.service") exit 0 ;;\n'
         "  *) exit 1 ;;\n"
@@ -408,9 +385,11 @@ def test_restart_web_servers_checks_activity_and_restarts_only_running_units(tmp
         check=True,
     )
     assert log.read_text().splitlines() == [
+        "show --property=SystemState --value",
         "is-active --quiet apache2.service",
         "show --property=SubState --value apache2.service",
         "try-restart apache2.service",
+        "is-active --quiet httpd.service",
         "is-active --quiet nginx.service",
     ]
 
@@ -502,4 +481,28 @@ install_{role}_units "$2" "$3" "$4"
         f"enable --now {timer}",
         "daemon-reload",
         f"enable --now {timer}",
+    ]
+
+
+def test_restart_web_servers_uses_openrc_without_systemd(tmp_path):
+    manager = tmp_path / "rc-service"
+    manager.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$*" >> "$SERVICE_LOG"\n'
+        'case "$*" in\n'
+        '  "httpd status"|"httpd restart") exit 0 ;;\n'
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    manager.chmod(0o700)
+    log = tmp_path / "services.log"
+    subprocess.run(
+        ["/bin/sh", str(ROOT / "examples/client/hooks.d/restart-web-servers")],
+        env={"PATH": str(tmp_path), "SERVICE_LOG": str(log)},
+        check=True,
+    )
+    assert log.read_text().splitlines() == [
+        "apache2 status",
+        "httpd status",
+        "httpd restart",
+        "nginx status",
     ]

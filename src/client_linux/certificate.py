@@ -3,7 +3,9 @@
 import hashlib
 import io
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
@@ -23,7 +25,6 @@ PEMS = ("cert.pem", "chain.pem", "fullchain.pem", "privkey.pem")
 FILES = (*PEMS, "manifest.json")
 MAX_FILE = 64 * 1024
 MAX_BUNDLE = 5 * MAX_FILE + 4096
-TRUST = Path("/etc/ssl/certs/ca-certificates.crt")
 KEYS = {
     ("ECDSA", 256): "ec-256",
     ("ECDSA", 384): "ec-384",
@@ -62,7 +63,7 @@ def validate(
     version: int,
     material: dict[str, bytes],
     scratch: Path,
-    trust: Path = TRUST,
+    trust: Path | None = None,
 ) -> dict[str, Any]:
     if set(material) != set(PEMS) or any(len(data) > MAX_FILE for data in material.values()):
         raise ValueError("Invalid certificate files")
@@ -115,14 +116,12 @@ def validate(
         directory = Path(temporary)
         leaf_file = directory / "leaf.pem"
         leaf_file.write_bytes(material["cert.pem"])
-        args = [
-            "/usr/bin/openssl",
-            "verify",
-            "-purpose",
-            "sslserver",
-            "-trusted",
-            str(trust),
-        ]
+        openssl = shutil.which("openssl")
+        if openssl is None:
+            raise ValueError("OpenSSL is required to verify the certificate chain")
+        args = [str(Path(openssl).resolve()), "verify", "-purpose", "sslserver"]
+        if trust is not None:
+            args += ["-trusted", str(trust)]
         if chain:
             chain_file = directory / "chain.pem"
             chain_file.write_bytes(material["chain.pem"])
@@ -130,7 +129,14 @@ def validate(
         try:
             result = subprocess.run(
                 [*args, str(leaf_file)],
-                env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                env={
+                    "LC_ALL": "C",
+                    **{
+                        key: os.environ[key]
+                        for key in ("SSL_CERT_FILE", "SSL_CERT_DIR")
+                        if key in os.environ
+                    },
+                },
                 capture_output=True,
                 timeout=15,
                 check=False,

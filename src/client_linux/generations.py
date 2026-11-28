@@ -26,12 +26,12 @@ class Generations:
             return
         self._mkdir(path.parent)
         try:
-            path.mkdir(mode=0o750)
+            path.mkdir(mode=0o700)
         except FileExistsError:
             if path.is_symlink() or not path.is_dir():
                 raise
         else:
-            path.chmod(0o750)
+            path.chmod(0o700)
             sync_directory(path.parent)
 
     def stage(self, identifier: str, version: int, files: dict[str, bytes]) -> None:
@@ -42,11 +42,9 @@ class Generations:
         temporary = Path(tempfile.mkdtemp(prefix=".stage-", dir=target.parent))
         try:
             for name, data in files.items():
-                write_atomic(temporary / name, data, mode=0o640)
+                write_atomic(temporary / name, data)
             if target.exists():
                 raise FileExistsError("Certificate generation already exists")
-            temporary.chmod(0o750)
-            sync_directory(temporary)
             os.rename(temporary, target)
             sync_directory(target.parent)
         finally:

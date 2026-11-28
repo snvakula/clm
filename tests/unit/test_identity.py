@@ -1,7 +1,7 @@
 import pytest
 
-from clm_client_debian import identity as client_identity
-from clm_server import identity as server_identity
+from client_linux import identity as client_identity
+from server import identity as server_identity
 
 pytestmark = pytest.mark.parametrize("identity", [server_identity, client_identity])
 
