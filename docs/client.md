@@ -44,3 +44,31 @@ The installer configures logrotate when it is installed. Otherwise, rotate `/opt
 Place executable root-owned scripts in `/opt/clm-client/config/hooks.d/` and give them mode `0700`. The client runs them by file name once per changed batch, after the new certificate and key paths are active. It skips hooks when the certificate material stays the same. The example `restart-web-servers` hook restarts running Apache and Nginx services through systemd, OpenRC or a compatible `service` command. To disable the example hook, remove its execute permission.
 
 A hook receives `CLM_CLIENT_ROOT`, `CLM_HOOK_EVENT` and `CLM_UPDATED_CERTIFICATES`. The last variable lists the changed DNS identifiers separated by newlines. The update event is `updated`. If a hook fails, CLM restores the previous certificate links and calls each attempted hook with `rollback`. Make hooks safe to retry. The client limits each run to 120 seconds and reports failures by script name. Keep script dependencies and any output under your own control. Configure services independently to consume the stable paths shown by `status`.
+
+### Nginx certificate snippets
+
+On an Nginx host, enable the optional hook from the checkout that supplied your client.
+
+```sh
+sudo install -m 0700 examples/client/hooks.d/nginx-snippets \
+    /opt/clm-client/config/hooks.d/nginx-snippets
+```
+
+The hook writes `/etc/nginx/snippets/clm/example.com.conf` for `example.com` and `/etc/nginx/snippets/clm/_wildcard.example.com.conf` for `*.example.com`. Very long names that cannot fit in a Linux filename use `_sha256-<digest>.conf`, with the hexadecimal SHA-256 of the canonical certificate identifier.
+
+Include the chosen snippet inside the Nginx `server` block.
+
+```nginx
+include /etc/nginx/snippets/clm/example.com.conf;
+```
+
+The snippet references the active certificate and private key through the client's stable `current` paths. The hook leaves existing operator files in place and removes a generated snippet if rollback leaves it without a certificate. When both example hooks are enabled, `nginx-snippets` runs before `restart-web-servers`.
+
+For a certificate the client already has, generate its snippet once before adding the Nginx include. Use the identifier from `clm-client status`.
+
+```sh
+sudo env CLM_CLIENT_ROOT=/opt/clm-client CLM_HOOK_EVENT=updated \
+    CLM_UPDATED_CERTIFICATES=example.com /opt/clm-client/config/hooks.d/nginx-snippets
+```
+
+After editing the Nginx configuration, check it with `sudo nginx -t` and reload Nginx through your service manager.

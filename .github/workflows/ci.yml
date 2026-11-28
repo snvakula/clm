@@ -16,8 +16,8 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: python -m pip install --require-hashes -r packaging/requirements/server.txt
       - run: python -m pip install '.[server,dev]'
-      - run: ruff check .
-      - run: ruff format --check .
+      - run: ruff check . examples/client/hooks.d/nginx-snippets
+      - run: ruff format --check . examples/client/hooks.d/nginx-snippets
       - run: shellcheck scripts/*.sh packaging/acme/recover-dns.sh examples/client/hooks.d/restart-web-servers
       - name: Verify the pinned upstream ACME source
         run: |
