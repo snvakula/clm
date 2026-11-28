@@ -67,7 +67,8 @@ class Remote:
                 404: "Certificate or generation is unavailable",
                 429: "CLM server rate limited the request",
             }
-            raise ValueError(messages.get(error.code, "CLM server returned an error")) from None
+            message = messages.get(error.code, "CLM server returned an error")
+            raise ValueError(f"{message} (HTTP {error.code}, GET /v1{path})") from None
         except (OSError, ValueError):
             raise ValueError("Could not connect securely to the CLM server") from None
         if len(data) > maximum:
